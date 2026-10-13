@@ -16,6 +16,11 @@ export function describeFailure(error: unknown): string {
       return "The Hako on your Mac can’t do this yet. Update it and try again.";
     case "bad_request":
     case "failed":
+    case "not_a_directory":
+    case "is_a_directory":
+    case "permission_denied":
+    case "conflict":
+    case "too_large":
       return error.message || "Your Mac couldn’t do that.";
   }
 }
