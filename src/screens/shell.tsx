@@ -181,7 +181,10 @@ export function Shell({ email, onLoggedOut }: ShellProps) {
           area={area}
           resume={resume.current}
           hiddenOnPhone={
-            route.name === "terminal" || route.name === "file" || route.name === "diff"
+            route.name === "terminal" ||
+            route.name === "file" ||
+            route.name === "diff" ||
+            route.name === "commitFile"
           }
         />
         {area === "terminals" ? (
@@ -282,7 +285,11 @@ export function Shell({ email, onLoggedOut }: ShellProps) {
           </>
         ) : route.name === "files" || route.name === "dir" || route.name === "file" ? (
           <FilesArea route={route} />
-        ) : route.name === "git" || route.name === "repo" || route.name === "diff" ? (
+        ) : route.name === "git" ||
+          route.name === "repo" ||
+          route.name === "diff" ||
+          route.name === "commit" ||
+          route.name === "commitFile" ? (
           <SourceControlArea route={route} />
         ) : (
           <div className="min-h-0 overflow-y-auto overscroll-contain narrow:flex-1 wide:col-span-2 wide:border-l">

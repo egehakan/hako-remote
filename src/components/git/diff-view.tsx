@@ -33,6 +33,7 @@ import {
   gitPrefs,
   toGitError,
   useActivity,
+  useCommit,
   useEpoch,
   useGitPrefs,
   useRepo,
@@ -50,14 +51,24 @@ type Loaded =
 /** How many lines are drawn at first, and how many more each time the owner asks. */
 const LINES_STEP = 2_000;
 
-/** One changed file against the last commit. */
-export default function DiffView({ repoPath, filePath }: { repoPath: string; filePath: string }) {
+type DiffViewProps = {
+  repoPath: string;
+  filePath: string;
+  /** The commit whose change to the file is shown; null for the working tree's. */
+  commit?: string | null;
+};
+
+/** One changed file against the last commit, or what one commit changed in it. */
+export default function DiffView({ repoPath, filePath, commit = null }: DiffViewProps) {
   const ui = useGitUi();
   const wide = useWide();
   const { link, agent } = useConnection();
   const online = link === "open" && agent?.online === true;
-  const status = useRepoStatus(repoPath);
-  const repo = useRepo(repoPath) ?? status.data?.repo ?? null;
+  // The files the diff is one of: the working tree's, or the commit's.
+  const working = useRepoStatus(commit === null ? repoPath : null);
+  const committed = useCommit(commit === null ? null : repoPath, commit);
+  const status = commit === null ? working : committed;
+  const repo = useRepo(repoPath) ?? working.data?.repo ?? null;
   const epoch = useEpoch(repoPath);
   const activity = useActivity(repoPath);
   const prefs = useGitPrefs();
@@ -75,6 +86,7 @@ export default function DiffView({ repoPath, filePath }: { repoPath: string; fil
     if (!online || !statusKnown) return;
     let cancelled = false;
     const params: GitDiffParams = { repo: repoPath, path: filePath, old_path: oldPath };
+    if (commit !== null) params.commit = commit;
     relay.request<GitDiffResult>("git.diff", params).then(
       (result) => {
         if (!cancelled) setLoaded({ state: "ready", result });
@@ -90,14 +102,17 @@ export default function DiffView({ repoPath, filePath }: { repoPath: string; fil
     return () => {
       cancelled = true;
     };
-  }, [online, statusKnown, repoPath, filePath, oldPath, epoch]);
+  }, [online, statusKnown, repoPath, filePath, oldPath, commit, epoch]);
 
   const cut = filePath.lastIndexOf("/");
   const name = filePath.slice(cut + 1);
   const directory = cut === -1 ? "" : filePath.slice(0, cut);
   const previous = files && index > 0 ? files[index - 1] : null;
   const next = files && index !== -1 && index < files.length - 1 ? files[index + 1] : null;
-  const gone = files !== null && file === null && !status.loading;
+  const gone = commit === null && files !== null && file === null && !status.loading;
+  const back = commit === null ? routes.repo(repoPath) : routes.commit(repoPath, commit);
+  const linkTo = (path: string) =>
+    commit === null ? routes.diff(repoPath, path) : routes.commitFile(repoPath, commit, path);
   const busy = activity?.state === "running";
   const text = loaded.state === "ready" && loaded.result.kind === "text" ? loaded.result : null;
 
@@ -107,10 +122,11 @@ export default function DiffView({ repoPath, filePath }: { repoPath: string; fil
         <Button
           variant="ghost"
           size="icon-touch"
-          className="size-11 wide:hidden"
-          aria-label="Back to the changed files"
+          // A commit's file opens over the commit, on a wide screen too, so there it leads back.
+          className={cn("size-11", commit === null && "wide:hidden")}
+          aria-label={commit === null ? "Back to the changed files" : "Back to the commit"}
           nativeButton={false}
-          render={<a href={routes.repo(repoPath)} />}
+          render={<a href={back} />}
         >
           <ChevronLeftIcon />
         </Button>
@@ -123,6 +139,7 @@ export default function DiffView({ repoPath, filePath }: { repoPath: string; fil
             translate="no"
           >
             {directory === "" ? (repo?.name ?? "") : directory}
+            {commit !== null ? ` at ${commit.slice(0, 7)}` : ""}
           </p>
         </div>
         <Toggle
@@ -133,29 +150,33 @@ export default function DiffView({ repoPath, filePath }: { repoPath: string; fil
         >
           <WrapTextIcon />
         </Toggle>
-        <Button
-          variant="ghost"
-          size="icon-touch"
-          className="size-11"
-          aria-label="Open this file in Files"
-          disabled={file?.status === "deleted" || gone}
-          nativeButton={false}
-          render={<a href={routes.file(joinPath(repoPath, filePath))} />}
-        >
-          <FileTextIcon />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-touch"
-          className="size-11 text-destructive hover:text-destructive"
-          aria-label="Discard the changes to this file"
-          disabled={!ui.canAct || busy || file === null || repo === null}
-          onClick={() => {
-            if (repo !== null && file !== null) ui.askDiscard(repo, file);
-          }}
-        >
-          <Undo2Icon />
-        </Button>
+        {commit === null ? (
+          <>
+            <Button
+              variant="ghost"
+              size="icon-touch"
+              className="size-11"
+              aria-label="Open this file in Files"
+              disabled={file?.status === "deleted" || gone}
+              nativeButton={false}
+              render={<a href={routes.file(joinPath(repoPath, filePath))} />}
+            >
+              <FileTextIcon />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-touch"
+              className="size-11 text-destructive hover:text-destructive"
+              aria-label="Discard the changes to this file"
+              disabled={!ui.canAct || busy || file === null || repo === null}
+              onClick={() => {
+                if (repo !== null && file !== null) ui.askDiscard(repo, file);
+              }}
+            >
+              <Undo2Icon />
+            </Button>
+          </>
+        ) : null}
       </header>
 
       {file ? (
@@ -191,9 +212,9 @@ export default function DiffView({ repoPath, filePath }: { repoPath: string; fil
               variant="secondary"
               size="touch"
               nativeButton={false}
-              render={<a href={routes.repo(repoPath)} />}
+              render={<a href={back} />}
             >
-              Back to the changed files
+              {commit === null ? "Back to the changed files" : "Back to the commit"}
             </Button>
           </GitProblem>
         </div>
@@ -214,7 +235,13 @@ export default function DiffView({ repoPath, filePath }: { repoPath: string; fil
           }. Look at it on your Mac.`}
         />
       ) : text !== null ? (
-        <DiffText diff={text.diff} wrap={wrap} gone={gone} status={file?.status ?? null} />
+        <DiffText
+          diff={text.diff}
+          wrap={wrap}
+          gone={gone}
+          status={file?.status ?? null}
+          inCommit={commit !== null}
+        />
       ) : null}
 
       {files && files.length > 1 && index !== -1 ? (
@@ -222,11 +249,11 @@ export default function DiffView({ repoPath, filePath }: { repoPath: string; fil
           aria-label="Changed files"
           className="flex shrink-0 items-center gap-1 border-t bg-background px-[max(0.25rem,env(safe-area-inset-left))] pt-1 pb-[max(0.25rem,env(safe-area-inset-bottom))]"
         >
-          <StepLink file={previous} repoPath={repoPath} direction="previous" />
+          <StepLink file={previous} href={linkTo} direction="previous" />
           <span className="shrink-0 px-1 font-mono text-[0.6875rem] text-faint tabular-nums">
             {index + 1} of {files.length}
           </span>
-          <StepLink file={next} repoPath={repoPath} direction="next" />
+          <StepLink file={next} href={linkTo} direction="next" />
         </nav>
       ) : null}
     </div>
@@ -245,9 +272,14 @@ function binaryDetail(name: string, before: number | null, after: number | null)
   return `${name} holds binary data, so there are no lines to compare. ${sizes}`.trim();
 }
 
-type StepLinkProps = { file: GitFile | null; repoPath: string; direction: "previous" | "next" };
+type StepLinkProps = {
+  file: GitFile | null;
+  /** The address of a file's diff, among the files this one is stepped through with. */
+  href: (path: string) => string;
+  direction: "previous" | "next";
+};
 
-function StepLink({ file, repoPath, direction }: StepLinkProps) {
+function StepLink({ file, href, direction }: StepLinkProps) {
   const forward = direction === "next";
   const label = file?.path.slice(file.path.lastIndexOf("/") + 1) ?? "";
   const contents = (
@@ -266,7 +298,7 @@ function StepLink({ file, repoPath, direction }: StepLinkProps) {
   if (file === null) return <span className={layout} />;
   return (
     <a
-      href={routes.diff(repoPath, file.path)}
+      href={href(file.path)}
       // Stepping through the files is one visit, not a trail of them to go back through.
       onClick={(event) => {
         // A click that asks for a new tab or window gets one.
@@ -280,7 +312,7 @@ function StepLink({ file, repoPath, direction }: StepLinkProps) {
           return;
         }
         event.preventDefault();
-        window.location.replace(routes.diff(repoPath, file.path));
+        window.location.replace(href(file.path));
       }}
       aria-label={`${forward ? "Next" : "Previous"} file: ${file.path}`}
       className={cn(
@@ -323,9 +355,11 @@ type DiffTextProps = {
   /** True when the file is no longer among the changed ones. */
   gone: boolean;
   status: GitFile["status"] | null;
+  /** True for what a commit changed, where there is no "now" to compare with. */
+  inCommit: boolean;
 };
 
-function DiffText({ diff, wrap, gone, status }: DiffTextProps) {
+function DiffText({ diff, wrap, gone, status, inCommit }: DiffTextProps) {
   const parsed = useMemo(() => parseDiff(diff), [diff]);
   const [limit, setLimit] = useState(LINES_STEP);
   const scroller = useRef<HTMLDivElement>(null);
@@ -334,13 +368,19 @@ function DiffText({ diff, wrap, gone, status }: DiffTextProps) {
     return (
       <Notice
         icon={FileTextIcon}
-        title={gone || status === null ? "No changes in this file" : "No line changed"}
+        title={
+          !inCommit && (gone || status === null) ? "No changes in this file" : "No line changed"
+        }
         detail={
-          gone || status === null
-            ? "It matches the last commit now: its changes were committed or discarded."
-            : parsed.notes.length > 0
+          inCommit
+            ? parsed.notes.length > 0
               ? `${parsed.notes.join(". ")}. The contents are the same.`
-              : "The file differs from the last commit in something other than its lines, such as its mode."
+              : "This commit changed something other than the file’s lines, such as its mode, or did not touch it."
+            : gone || status === null
+              ? "It matches the last commit now: its changes were committed or discarded."
+              : parsed.notes.length > 0
+                ? `${parsed.notes.join(". ")}. The contents are the same.`
+                : "The file differs from the last commit in something other than its lines, such as its mode."
         }
       />
     );
