@@ -126,8 +126,21 @@ push or pull, then the rest, with a filter over all of them. Each shows its bran
 detached HEAD is at), how many commits it is ahead and behind, and how many files changed.
 
 - **One repository.** Its changed files with what happened to each (modified, added, deleted,
-  renamed, untracked, in conflict) and the lines that went in and out. Commit, Push and Pull sit at
-  the bottom of the screen and on the repository's row in the list.
+  renamed, untracked, in conflict) and the lines that went in and out, and under them its graph.
+  Each of the two folds away. Commit, Push and Pull sit at the bottom of the screen and on the
+  repository's row in the list.
+- **Branches.** The branch's name, on a repository's row and at the top of its screen, opens the
+  list of branches: those on your Mac, then those only on the remote, with a filter and "New
+  branch", which starts one at the commit you are on. Choosing one switches to it. Nothing is
+  stashed, forced or thrown away for it: when git refuses, because your changes are in the way or
+  the branch is open in another worktree, what git said is shown and nothing has changed.
+- **The graph.** The history of the current branch as the editor on your desk draws it: its line in
+  amber, its upstream's beside it in blue where the two differ, what was merged in in grey, with
+  the branches and tags that point at each commit. A commit that is not pushed yet, or not pulled
+  yet, is a ring with an arrow at the end of its row, and a line above the list says how many
+  there are of each, with Push and Pull. Older commits load as you reach them.
+- **A commit.** Tapping one shows its message, author, date and hash, and the files it changed;
+  tapping a file shows what that commit changed in it.
 - **A diff.** Tapping a file shows it against the last commit: line numbers, `+` and `−` beside
   the colours, the changed part of a changed line marked, and a switch between wrapped lines and
   lines that run on sideways. From there you step to the next changed file, open the file in Files,
@@ -142,8 +155,9 @@ detached HEAD is at), how many commits it is ahead and behind, and how many file
   untracked files included. It cannot be undone.
 
 The list is read again when you open it, when you ask, after everything you do, and when the page
-comes back to the foreground. A Hako that does not have these methods yet answers `not_supported`,
-and Source control says to update it.
+comes back to the foreground, and so are the branches and the graph. A Hako that does not have
+these methods yet answers `not_supported`, and Source control says to update it; one that has them
+but not branches and the graph yet says so in their place, and the rest works as before.
 
 ## Notifications on iPhone
 
@@ -237,24 +251,27 @@ The folders of that tree are git repositories, built at start by the real `git` 
 removed with the tree. The source control methods run git in them and in nothing else, with a
 name and an email set in each repository and without reading your own git configuration.
 
-| Repository              | What it is for                                                                                                                                                    |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `hako`                  | One change of every kind: modified, added, deleted, renamed, untracked, binary, a line far too long, a missing final newline. No remote.                          |
-| `hako/vendor/glyphs`    | A repository inside another one, on a detached HEAD.                                                                                                              |
-| `hako-remote`           | A diff of thousands of lines, and one over the 1 MB limit.                                                                                                        |
-| `Notes`                 | Nothing to commit.                                                                                                                                                |
-| `egehakan.com`          | A local bare repository as its remote. It starts one commit ahead and one behind, with the two in conflict: a push is rejected, and a pull stops at the conflict. |
-| `egehakan.com-redesign` | A linked worktree of it, on a branch that was never pushed, so its first push publishes the branch.                                                               |
+| Repository                    | What it is for                                                                                                                                                                                                                                                                                                                                                                |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hako`                        | One change of every kind: modified, added, deleted, renamed, untracked, binary, a line far too long, a missing final newline. No remote. Git refuses to switch it to `protocol-v2`, which the changes are in the way of, and switches it to `spike/key-bar`.                                                                                                                  |
+| `hako/vendor/glyphs`          | A repository inside another one, on a detached HEAD.                                                                                                                                                                                                                                                                                                                          |
+| `hako-remote`                 | A diff of thousands of lines, and one over the 1 MB limit.                                                                                                                                                                                                                                                                                                                    |
+| `hako-remote/fixtures/sketch` | A repository without a commit.                                                                                                                                                                                                                                                                                                                                                |
+| `Notes`                       | Nothing to commit, and 2,400 commits to page through, with a side line merged in now and then.                                                                                                                                                                                                                                                                                |
+| `egehakan.com`                | A local bare repository as its remote. It starts two commits ahead and one behind, with the two sides in conflict: a push is rejected, and a pull stops at the conflict. Its history has a merge, a tag and a rename, and it has branches of every kind: one ahead of its remote, one that was never pushed, one that is only on the remote, and one that the worktree holds. |
+| `egehakan.com-redesign`       | A linked worktree of it, on a branch that was never pushed, so its first push publishes the branch.                                                                                                                                                                                                                                                                           |
 
 The mock agent prints the path of a script, `teammate-pushes.sh`, that pushes one more commit to
 that remote as someone else would. After it a push is rejected until you pull, and a pull is
 refused while `style.css` has changes that are not committed.
 
 - `MOCK_GIT=0` leaves the source control methods out, as a desktop app from before they existed
-  would.
+  would. `MOCK_GIT_HISTORY=0` leaves out only branches, switching and the graph.
 - `MOCK_GIT_EMPTY=1` answers that there are no repositories.
 - `MOCK_GIT_DELAY_MS=1500` makes every answer slow, and `MOCK_GIT_NETWORK_DELAY_MS=25000` makes a
   push or a pull take longer than the relay waits for an ordinary request.
+  `MOCK_GIT_SWITCH_DELAY_MS=65000` makes a switch of branch outlast the minute the app waits for
+  one, after which it says that the switch is still going on and reads the repository when it ends.
 
 ### The mock agent's notifications
 
