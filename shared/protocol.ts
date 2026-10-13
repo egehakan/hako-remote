@@ -1,0 +1,100 @@
+// Types and constants for docs/protocol.md. Shared by the relay, the web client and the mock agent.
+
+export const PROTOCOL_VERSION = 1;
+
+export const PING_INTERVAL_MS = 25_000;
+export const IDLE_TIMEOUT_MS = 60_000;
+export const REQUEST_TIMEOUT_MS = 20_000;
+export const MAX_FRAME_BYTES = 8 * 1024 * 1024;
+
+export const CLOSE_REPLACED = 4001;
+export const CLOSE_SESSION_ENDED = 4401;
+
+export type ErrorCode =
+  | "agent_offline"
+  | "timeout"
+  | "bad_request"
+  | "not_found"
+  | "not_supported"
+  | "failed";
+
+export type RpcError = { code: ErrorCode; message: string };
+
+export type RequestFrame = { t: "req"; id: string; method: string; params?: unknown };
+export type ResponseFrame =
+  | { t: "res"; id: string; ok: true; result: unknown }
+  | { t: "res"; id: string; ok: false; error: RpcError };
+export type NotificationFrame = { t: "ntf"; method: string; params?: unknown };
+export type EventFrame = { t: "evt"; event: string; data: unknown };
+export type PingFrame = { t: "ping" };
+export type PongFrame = { t: "pong" };
+
+export type Frame =
+  | RequestFrame
+  | ResponseFrame
+  | NotificationFrame
+  | EventFrame
+  | PingFrame
+  | PongFrame;
+
+export type AgentStatus = {
+  online: boolean;
+  name?: string;
+  version?: string;
+  hostname?: string;
+};
+
+export type AppInfo = { name: string; version: string; hostname: string; protocol: number };
+
+export type AgentState = {
+  name: string;
+  status: "working" | "waiting" | "done" | "failed";
+  message: string | null;
+};
+
+export type Pane = {
+  id: string;
+  kind: "terminal" | "file" | "other";
+  title: string;
+  focused: boolean;
+  session_id: string | null;
+  cwd: string | null;
+  agent: AgentState | null;
+};
+
+export type Tab = {
+  id: string;
+  title: string;
+  active: boolean;
+  folder_id: string | null;
+  panes: Pane[];
+};
+
+export type Folder = {
+  id: string;
+  name: string;
+  directory: string;
+  color: string | null;
+  icon: string | null;
+};
+
+export type Window = { id: string; active: boolean; folders: Folder[]; tabs: Tab[] };
+
+export type Workspace = { windows: Window[] };
+
+export type TabCreateParams = { window_id?: string; folder_id?: string; directory?: string };
+export type TabCreateResult = { tab_id: string; session_id: string };
+
+export type TermSubscribeResult = { cols: number; rows: number; seq: number; snapshot: string };
+
+export type TerminalTheme = {
+  terminal: {
+    background: string;
+    foreground: string;
+    cursor: string;
+    selection: string;
+    ansi: string[];
+  };
+  font_family: string;
+  font_size: number;
+};
