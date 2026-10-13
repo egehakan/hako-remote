@@ -1,9 +1,6 @@
-import { UserRoundIcon } from "lucide-react";
 import { BoxMark } from "@/components/box-mark";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useConnection } from "@/lib/hooks";
-import { routes } from "@/lib/route";
 
 /** Who is on the other end: the Mac's name when Hako is connected, or why there is nothing to show. */
 export function MacHeader() {
@@ -45,15 +42,6 @@ export function MacHeader() {
           </div>
         )}
       </div>
-      <Button
-        variant="ghost"
-        size="icon-touch"
-        aria-label="Account"
-        nativeButton={false}
-        render={<a href={routes.account} />}
-      >
-        <UserRoundIcon />
-      </Button>
     </header>
   );
 }

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { BoxMark } from "@/components/box-mark";
 import { api } from "@/lib/api";
 import { relay } from "@/lib/connection";
+import { clearFiles } from "@/lib/files/store";
 import { navigate, routes } from "@/lib/route";
 import { workspaceStore } from "@/lib/workspace";
 import { LoginScreen } from "@/screens/login";
@@ -15,6 +16,7 @@ export function App() {
   const signedOut = useCallback(() => {
     relay.stop();
     workspaceStore.clear();
+    clearFiles();
     navigate(routes.workspace, { replace: true });
     setAuth({ state: "anonymous" });
   }, []);
