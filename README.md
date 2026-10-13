@@ -55,27 +55,28 @@ http://localhost:5173. Vite proxies `/api` and `/ws` to the relay.
 
 ## Configuration
 
-| Variable | Meaning |
-|---|---|
-| `HAKO_OWNER_EMAIL` | The email of the one account. There is no sign-up. |
-| `HAKO_INITIAL_PASSWORD` | Used once, to create the account when the database is empty. Changing it later does nothing; change the password in the app. |
-| `HAKO_AGENT_KEY` | The key the desktop app sends as `Authorization: Bearer …` on `/ws/agent`. At least 24 characters. |
-| `HAKO_SESSION_SECRET` | Signs session cookies. At least 24 characters. Changing it logs every device out. |
-| `PUBLIC_ORIGIN` | The origin the app is served from, such as `https://hako.example.com`. Requests and WebSockets from any other origin are refused. Several origins can be given, separated by commas. Cookies are marked `Secure` when every origin is HTTPS. |
-| `DATA_DIR` | Where `hako.db` lives. Defaults to `./.data`. |
-| `PORT` | Defaults to `8787`. |
+| Variable                | Meaning                                                                                                                                                                                                                                      |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `HAKO_OWNER_EMAIL`      | The email of the one account. There is no sign-up.                                                                                                                                                                                           |
+| `HAKO_INITIAL_PASSWORD` | Used once, to create the account when the database is empty. Changing it later does nothing; change the password in the app.                                                                                                                 |
+| `HAKO_AGENT_KEY`        | The key the desktop app sends as `Authorization: Bearer …` on `/ws/agent`. At least 24 characters.                                                                                                                                           |
+| `HAKO_SESSION_SECRET`   | Signs session cookies. At least 24 characters. Changing it logs every device out.                                                                                                                                                            |
+| `PUBLIC_ORIGIN`         | The origin the app is served from, such as `https://hako.example.com`. Requests and WebSockets from any other origin are refused. Several origins can be given, separated by commas. Cookies are marked `Secure` when every origin is HTTPS. |
+| `DATA_DIR`              | Where `hako.db` lives. Defaults to `./.data`.                                                                                                                                                                                                |
+| `PORT`                  | Defaults to `8787`.                                                                                                                                                                                                                          |
 
 Generate the two secrets with something like `openssl rand -base64 36`.
 
 ## Deploy to Railway
 
-The repository has a `Dockerfile` and a `railway.json` that sets the health check to `/api/health`.
+Railway builds the `Dockerfile` in this repository.
 
 1. Create a service in a Railway project and attach a volume mounted at `/data`.
-2. Set the variables above on the service, with `DATA_DIR=/data` and `PUBLIC_ORIGIN` set to the
-   public URL you will use.
-3. Deploy, either with `railway up` from this folder or by connecting the GitHub repository.
-4. Add your domain to the service and create the DNS records Railway asks for.
+2. Set the variables above on the service, with `DATA_DIR=/data`, `PORT=8787` and `PUBLIC_ORIGIN`
+   set to the public URL you will use.
+3. In the service settings, set the health check path to `/api/health`.
+4. Deploy, either with `railway up` from this folder or by connecting the GitHub repository.
+5. Add your domain to the service, on port 8787, and create the DNS records Railway asks for.
 
 Run exactly one replica: the relay holds the agent connection and the SQLite file in one process.
 
