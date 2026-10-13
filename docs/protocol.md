@@ -161,6 +161,7 @@ Ids are strings chosen by the agent. A client never builds one.
 | `tab.create` | `{ window_id?, folder_id?, directory? }` | `{ tab_id, session_id }`. Opens a tab with one terminal and makes it the active tab. With `folder_id` the tab joins that folder, in the folder's window, and the terminal opens in the folder's directory (`window_id` and `directory` are then ignored). Without `window_id` the active window is used; without `directory`, the app's default. With no window open at all, a new window is opened and the new tab is its first. |
 | `tab.activate` | `{ tab_id }` | `{}`. Also brings that tab, and its window, forward on the Mac. |
 | `tab.close` | `{ tab_id }` | `{}`. The client confirms first; the Mac does not ask again. Fails with `failed` and a message for the owner when the tab holds unsaved edits or when closing it would quit the app; the client shows the message and does not retry. |
+| `folder.create` | `{ directory, window_id? }` | `{ folder_id }`. Adds a folder pointing at `directory` to the given window, or to the frontmost one, or to a new window when none is open. If a folder for that directory already exists in that window, it is not duplicated: the result is that folder's id. |
 
 ```ts
 type Window = { id: string; active: boolean; folders: Folder[]; tabs: Tab[] };
@@ -193,6 +194,19 @@ app runs with no window open.
   one emoji. A client shows the default icon for a key it does not know.
 - `Folder.name` is the name to display, as the desktop sidebar shows it. It need not be the last
   part of `directory`: the home folder is named "Home".
+
+#### `folder.create`
+
+- `directory` is an absolute, normalised path, under the same rules as the paths of
+  [Files](#paths). It must exist and be a directory: otherwise the answer is `not_found` or
+  `not_a_directory`, and `permission_denied` when it cannot be read. These are the codes of the
+  file methods, listed under [Files](#errors).
+- The desktop app emits `workspace.changed` afterwards.
+- The folder's name, colour and icon are the app's defaults; the name falls back to the last part
+  of `directory`. Renaming, recolouring and removing folders stay on the Mac.
+- An older desktop app answers `not_supported`. The client finds out before it offers the action,
+  by sending `folder.create` with `directory: "?"`, which is not a path and so can add nothing: an
+  app that has the method answers `bad_request`, as for any malformed path.
 
 Event `workspace.changed` (`{}`) is sent, at most twice a second, whenever the result of
 `workspace.list` would differ. The client calls `workspace.list` again.
@@ -345,6 +359,7 @@ arrive as stray input. Neither the snapshot nor the stream needs to hide such re
 | `fs.list` | `{ path }` | `{ entries: Entry[], truncated }` |
 | `fs.read` | `{ path }` | `ReadResult` |
 | `fs.write` | `{ path, content, expected_mtime }` | `{ mtime, size }` |
+| `fs.mkdir` | `{ path }` | `{}` |
 
 ```ts
 type Root = { path: string; name: string; source: "folder" | "terminal" | "home" };
@@ -363,11 +378,11 @@ type ReadResult =
 ```
 
 These methods read and change files on the Mac as the user Hako runs as. They are not confined to
-the roots: any path that user can reach is served, since the same client already has a shell. These
-four read directories and files and rewrite existing files. They do not create, rename, move or
-delete anything, and no event is sent when a file changes on the Mac: the client asks again. Whole
-files of any kind, in either direction, and new files, are what [Transfers](#transfers-sprint-7)
-are for.
+the roots: any path that user can reach is served, since the same client already has a shell. The
+first four read directories and files and rewrite existing files, and `fs.mkdir` creates one
+directory. None of them creates a file, or renames, moves or deletes anything, and no event is sent
+when a file changes on the Mac: the client asks again. Whole files of any kind, in either
+direction, and new files, are what [Transfers](#transfers-sprint-7) are for.
 
 #### Paths
 
@@ -494,6 +509,17 @@ for anything that is neither a directory nor a regular file.
   directory the user may not write to), `conflict`, `too_large`, and `failed` for any other trouble,
   such as a full disk.
 
+#### `fs.mkdir`
+
+- Creates exactly one directory, at `path`. There is no recursive creation: the parent of `path`
+  must exist and be a directory, otherwise the answer is `not_found` or `not_a_directory`.
+- An existing entry at `path`, of any kind, gives `conflict`.
+- The last component of `path` must be 1 to 255 bytes long, must not be `.` or `..`, and must not
+  contain `/` or NUL. Anything else is `bad_request`.
+- `permission_denied` as usual.
+- The result is `{}`.
+- An older desktop app answers `not_supported`.
+
 #### Errors
 
 The file methods add these codes to the ones under [Frames](#frames):
@@ -501,10 +527,10 @@ The file methods add these codes to the ones under [Frames](#frames):
 | Code | Meaning |
 |---|---|
 | `not_found` | Nothing exists at `path`, or a link on the way points nowhere. |
-| `not_a_directory` | `fs.list` of something that is not a directory. |
+| `not_a_directory` | `fs.list` of something that is not a directory; `fs.mkdir` under a parent that is not one. |
 | `is_a_directory` | `fs.read` or `fs.write` of a directory. |
 | `permission_denied` | The Mac refused: the operating system's `EACCES` or `EPERM`, or a macOS privacy rule. |
-| `conflict` | `fs.write`: the file's `mtime` is not `expected_mtime`. |
+| `conflict` | `fs.write`: the file's `mtime` is not `expected_mtime`. `fs.mkdir`: something already exists at `path`. |
 | `too_large` | `fs.write`: `content` is over the limit. (`fs.read` reports a large file as a result, not as an error.) |
 | `bad_request` | A malformed path or a missing or mistyped parameter. |
 | `failed` | Anything else. |
