@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Hako">
+  <defs>
+    <linearGradient id="ink" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b1e26"/>
+      <stop offset="1" stop-color="#0e0f14"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="230" fill="url(#ink)"/>
+  <polygon points="262,416 512,560 512,848 262,704" fill="#e8923e"/>
+  <polygon points="512,560 762,416 762,704 512,848" fill="#b05c28"/>
+  <polygon points="512,208 762,352 512,496 262,352" fill="#f6c984"/>
+</svg>
