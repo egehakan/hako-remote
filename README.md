@@ -3,8 +3,9 @@
 A phone-first web app, and the relay server behind it, for seeing and controlling the
 [Hako](https://github.com/egehakan/hako) terminal on your Mac from a browser: which folders and tabs
 are open, what each terminal is running, and whether a coding agent in one of them is working,
-waiting for you or done. You can open a terminal in a folder, bring a tab to the front and close one.
-The live terminal itself is the next step; the relay already routes its output.
+waiting for you or done. You can open a terminal in a folder, bring a tab to the front and close
+one, and you can use any of those terminals live: a shell, or a full-screen program such as Claude
+Code, with the keys a phone keyboard lacks.
 
 Hako Remote is a companion to [Hako](https://github.com/egehakan/hako), a personal terminal that is
 based on Warp. Neither project is affiliated with, or endorsed by, Warp.
@@ -32,10 +33,41 @@ Hako on the Mac ──wss, dials out──▶ relay ◀──https + wss── b
    (agent)                      (this repo)                (client)
 ```
 
+## The terminal
+
+Tapping a tab opens its terminal, drawn with [xterm.js](https://xtermjs.org) in the colours and font
+of the Hako on your Mac. `#/t/<session id>` is its address, so a link can open one directly.
+
+- **Size.** By default the phone does not resize anything: you see the terminal at the size it has
+  on your Mac, scaled so its full width fits, and you pinch to zoom and drag to pan. **Fit to
+  phone** (under the size shown in the title bar, or under "more" in the key bar) resizes the
+  terminal on the Mac to the phone's screen instead, and gives the size back when you turn it off or
+  leave. The choice is remembered.
+- **Keys.** A bar above the keyboard has Esc, Tab, Shift+Tab, a sticky Ctrl (tap it for the next
+  key, hold it to lock), Ctrl+C, the arrows (which repeat while held), Enter, Paste, and a key that
+  hides the keyboard. "More" holds Alt, Ctrl+D, Ctrl+L, Ctrl+R, Ctrl+Z, Home, End, Page up, Page
+  down, Delete and the symbols that take three taps on a phone keyboard.
+- **Message box.** One tap switches between typing straight into the terminal, with autocorrect
+  off, and a message box with autocorrect and dictation on. "Send" writes the message and presses
+  Enter; "Insert" writes it without. This is the comfortable way to write a prompt for Claude Code.
+- **Scrolling and copying.** One finger scrolls the history, and in a full-screen program sends
+  arrow keys. Holding a finger on the terminal, or "Select text" under "more", shows the history and
+  the screen as plain text that selects and copies like any other.
+- **Moving around.** Tapping the title lists every terminal on the Mac; swiping the title bar steps
+  to the next or the previous one. A tab with several terminals shows them as a row to choose from.
+- **When the link breaks.** If the Mac goes offline or the connection drops, the last screen stays
+  under a banner and comes back by itself.
+
+With a hardware keyboard and a mouse (a desktop browser, an iPad) the terminal takes keys,
+selection, copy and paste directly, and the key bar is still there. On a Mac keyboard Option types
+the characters of your layout, as in any Mac app; for Alt as a terminal modifier use Esc as a
+prefix, or the sticky Alt under "more".
+
 ## Run it locally
 
-You need Node 24 and pnpm. A mock agent stands in for the desktop app, with two windows of sample
-folders and tabs and fake terminals that print a line every second.
+You need Node 24 and pnpm, and Python 3 for the mock agent's shell. A mock agent stands in for the
+desktop app, with two windows of sample folders and tabs, fake terminals that print a line every
+second, and one real shell.
 
 ```sh
 pnpm install
@@ -52,6 +84,29 @@ For work on the web app, run `pnpm dev:server` and `pnpm dev` instead and open
 http://localhost:5173. Vite proxies `/api` and `/ws` to the relay.
 
 `pnpm test` runs the unit tests and `pnpm typecheck` checks both the server and the client.
+
+### The mock agent's real shell
+
+**The tab called "real shell", and every tab you open while the mock agent runs, is a real shell on
+your computer.** Whoever can log in to the relay the mock agent is connected to can run commands in
+it as you. So:
+
+- Run the mock agent only while you are testing, and only against a relay you are testing. Stop it
+  when you are done; never leave it running.
+- Against a relay on `localhost` the shell is on by default. Against any other relay it is off
+  unless you start the mock agent with `MOCK_SHELL=1`. `MOCK_SHELL=0` turns it off everywhere.
+- The shell is `zsh` (or `sh`) started by `scripts/pty-helper.py`, a small Python helper that gives
+  it a pseudo-terminal without a native Node module. It starts in a new temporary directory, or in
+  `MOCK_SHELL_DIR`, with that directory as its home and a clean environment, so it sees neither your
+  dotfiles nor the secrets in `.env`. It can still reach everything your user can.
+
+Two more things help when working on the terminal:
+
+- `kill -USR1 <pid of the mock agent>` drops the next output frame of every terminal that is being
+  watched, which shows how the client recovers from lost output.
+- A desktop browser gets the mouse-and-keyboard input path. To try the phone's path there (the
+  hidden text field, touch scrolling, the keyboard key), run `localStorage.setItem("hako.touch",
+"1")` in the console and reload; `"0"`, or removing the entry, switches back.
 
 ## Configuration
 
@@ -96,6 +151,9 @@ What stands in the way:
   Changing the password ends every other session.
 - `/ws/client` needs a valid session and an `Origin` header equal to `PUBLIC_ORIGIN`; `/ws/agent`
   needs the agent key, compared in constant time.
+
+The mock agent is a development tool with a real shell behind it (see above). Do not connect it
+to a relay that is reachable from the internet for longer than a test takes.
 
 What does not:
 
