@@ -135,21 +135,29 @@
     min-height: var(--app-height, 0px);
   }
 
-  /* Opened from the home screen there are no browser bars, so the large viewport is the whole
-     screen. An iPhone can start such an app with its other heights (the dynamic viewport, and
-     what a pinned element is measured against) short by the status bar, and corrects them only
-     after a scroll that this document never makes. */
-  @media (display-mode: standalone) {
-    #root {
-      bottom: auto;
-      height: var(--app-height, 100vh);
-    }
+  /* Opened from the home screen (src/lib/viewport.ts marks that) an iPhone can start the app with
+     a viewport that is short by about the status bar, although the page is drawn on the whole
+     screen. Whatever is pinned is cut off at that short viewport, and so is whatever a viewport
+     that may not scroll leaves outside it. So here nothing is pinned and nothing is clipped: the
+     page itself, and the root in it, are given the measured height of the screen, and the page is
+     allowed to scroll, which it only can while the viewport is short. */
+  :root[data-display="standalone"] {
+    height: var(--app-height, 100vh);
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
 
-    @supports (height: 100lvh) {
-      #root {
-        height: var(--app-height, 100lvh);
-      }
-    }
+  :root[data-display="standalone"] body {
+    height: var(--app-height, 100vh);
+    overflow: visible;
+  }
+
+  :root[data-display="standalone"] #root {
+    position: relative;
+    inset: auto;
+    height: var(--app-height, 100vh);
+    min-height: 0;
+    overflow: hidden;
   }
 
   html {
@@ -186,6 +194,22 @@
 /* A touch screen scrolls the terminal with a finger, so its scrollbar would only take room. */
 .terminal-host-touch .xterm .scrollbar {
   display: none;
+}
+
+/* A screen with a text field takes the whole of a phone and follows the visible part of the page,
+   above the keyboard. In a browser it is pinned to the viewport; in a home-screen app, where
+   nothing is pinned, it is placed in the root. */
+@media not ((min-width: 48rem) and (min-height: 30rem)) {
+  .visible-pane {
+    position: fixed;
+    top: var(--vv-top);
+    right: 0;
+    left: 0;
+  }
+
+  :root[data-display="standalone"] .visible-pane {
+    position: absolute;
+  }
 }
 
 @utility pt-safe {

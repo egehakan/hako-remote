@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { isKeyboardOpen, isWholeAppVisible } from "@/lib/viewport";
+import { isKeyboardOpen, isStandalone, isWholeAppVisible } from "@/lib/viewport";
 
 /**
  * Follows the part of the page that is really visible. An on-screen keyboard slides over the page
@@ -24,7 +24,10 @@ export function useVisibleViewport(): boolean {
           ? "var(--app-height, 100%)"
           : `${viewport?.height ?? window.innerHeight}px`,
       );
-      root.style.setProperty("--vv-top", `${viewport?.offsetTop ?? 0}px`);
+      // A pinned screen is placed in the viewport, and one in the page (as in a home-screen app)
+      // in the page, which the keyboard may have moved under the viewport.
+      const top = isStandalone() ? viewport?.pageTop : viewport?.offsetTop;
+      root.style.setProperty("--vv-top", `${top ?? 0}px`);
       setKeyboardOpen(isKeyboardOpen());
     };
     const schedule = () => {

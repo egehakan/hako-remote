@@ -24,18 +24,32 @@ export function isWholeAppVisible(): boolean {
   return !isKeyboardOpen() && !isZoomed() && (window.visualViewport?.offsetTop ?? 0) < 1;
 }
 
+/**
+ * True for the app opened from a home screen, with no browser around it. The stylesheet lays that
+ * app out differently, and finds out from the `data-display` attribute this is read from.
+ */
+export function isStandalone(): boolean {
+  return document.documentElement.dataset.display === "standalone";
+}
+
 /** How long after the page appears its size is measured again, in milliseconds. */
 const SETTLE_DELAYS_MS = [120, 500, 1500];
 
 /**
  * Keeps `--app-height` on the root element equal to the height the app should fill, from the first
- * frame on and whenever the screen changes. Call once, before the app is drawn.
+ * frame on and whenever the screen changes, and marks a home-screen app as one. Call once, before
+ * the app is drawn.
  */
 export function watchAppHeight(): void {
   const root = document.documentElement;
   const homeScreenApp = (navigator as { standalone?: boolean }).standalone === true;
+  const standalone = homeScreenApp || window.matchMedia("(display-mode: standalone)").matches;
+  if (standalone) root.dataset.display = "standalone";
   let applied = 0;
   let frame = 0;
+  let nudged = false;
+
+  const layoutHeight = () => Math.max(window.innerHeight, root.clientHeight);
 
   const apply = () => {
     frame = 0;
@@ -51,20 +65,37 @@ export function watchAppHeight(): void {
       applied = height;
       root.style.setProperty("--app-height", `${height}px`);
     }
+    // A home-screen app whose viewport started short is taller than that viewport, so its page can
+    // be moved a little. That is left alone: a scroll is what makes the phone measure again.
+    const short = standalone && layoutHeight() < applied;
     // A keyboard moves the page up to show the field being typed in. Once it has gone the page
-    // must be back at the top, and a document that cannot scroll never gets there by itself.
-    if (isWholeAppVisible() && (window.scrollY !== 0 || window.scrollX !== 0)) {
+    // must be back at the top, and a page that cannot scroll never gets there by itself.
+    if (!short && isWholeAppVisible() && (window.scrollY !== 0 || window.scrollX !== 0)) {
       window.scrollTo(0, 0);
     }
   };
   const schedule = () => {
     if (frame === 0) frame = requestAnimationFrame(apply);
   };
+  /**
+   * Moves a short-started page by one pixel and back, once: the phone corrects its viewport on a
+   * scroll, and this spares the owner making one.
+   */
+  const nudge = () => {
+    if (nudged || !standalone || layoutHeight() >= applied || !isWholeAppVisible()) return;
+    nudged = true;
+    window.scrollTo(0, 1);
+    requestAnimationFrame(() => {
+      window.scrollTo(0, 0);
+      schedule();
+    });
+  };
   // A page that has just appeared may still report the size it had before it settled, and nothing
   // announces the correction.
   const settle = () => {
     schedule();
     for (const delay of SETTLE_DELAYS_MS) window.setTimeout(schedule, delay);
+    window.setTimeout(nudge, SETTLE_DELAYS_MS[0] + 60);
   };
 
   apply();

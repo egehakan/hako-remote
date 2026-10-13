@@ -172,7 +172,7 @@ export function Shell({ email, onLoggedOut }: ShellProps) {
                 // On a phone the terminal follows the visible part of the page, above the keyboard.
                 openSessionId === null
                   ? "min-h-0 overflow-y-auto overscroll-contain narrow:flex-1"
-                  : "h-(--vv-height) overflow-hidden narrow:fixed narrow:inset-x-0 narrow:top-(--vv-top)",
+                  : "visible-pane h-(--vv-height) overflow-hidden",
                 route.name === "workspace" && "narrow:hidden",
               )}
             >

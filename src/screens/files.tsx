@@ -45,9 +45,7 @@ export function FilesArea({ route }: { route: FilesRoute }) {
         className={cn(
           "min-h-0 min-w-0 wide:border-l",
           // On a phone an open file follows the visible part of the page, above the keyboard.
-          shown !== null
-            ? "h-(--vv-height) overflow-hidden narrow:fixed narrow:inset-x-0 narrow:top-(--vv-top)"
-            : "min-h-0 narrow:hidden",
+          shown !== null ? "visible-pane h-(--vv-height) overflow-hidden" : "min-h-0 narrow:hidden",
         )}
       >
         {shown !== null ? (
