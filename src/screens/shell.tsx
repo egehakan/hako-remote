@@ -1,16 +1,18 @@
 import type { Tab } from "@shared/protocol";
-import { CircleAlertIcon, PlusIcon } from "lucide-react";
+import { CircleAlertIcon, FolderPlusIcon, PlusIcon } from "lucide-react";
 import {
   lazy,
   Suspense,
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
 } from "react";
 import { CloseTabDialog } from "@/components/close-tab-dialog";
+import { FolderPicker } from "@/components/folder-picker";
 import { LoadBoundary } from "@/components/load-boundary";
 import { MacHeader } from "@/components/mac-header";
 import { MacOffline } from "@/components/mac-offline";
@@ -24,7 +26,8 @@ import { Spinner } from "@/components/ui/spinner";
 import { type WorkspaceActions, WorkspaceActionsContext } from "@/components/workspace-actions";
 import { WorkspaceList } from "@/components/workspace-list";
 import { activateTab, closeTab, createTab } from "@/lib/actions";
-import { describeFailure } from "@/lib/errors";
+import { describeFailure, NEEDS_NEWER_HAKO } from "@/lib/errors";
+import { useFolderSupport } from "@/lib/folder-support";
 import { useConnection, useWorkspace } from "@/lib/hooks";
 import { arrivals, notifications } from "@/lib/notifications";
 import { type Area, areaOf, navigate, routes, useRoute } from "@/lib/route";
@@ -39,6 +42,8 @@ import { TabDetail } from "@/screens/tab-detail";
 const TerminalScreen = lazy(() => import("@/screens/terminal"));
 
 const LOOSE = "loose";
+/** How long a folder that has just been added stays pointed out in the list. */
+const ARRIVAL_SHOWN_MS = 2600;
 
 type ShellProps = { email: string; onLoggedOut: () => void };
 
@@ -55,6 +60,10 @@ export function Shell({ email, onLoggedOut }: ShellProps) {
   const [creatingIn, setCreatingIn] = useState<string | null>(null);
   const [closing, setClosing] = useState<Tab | null>(null);
   const [closeOpen, setCloseOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [arrivedFolderId, setArrivedFolderId] = useState<string | null>(null);
+  const folderSupport = useFolderSupport();
+  const folderNoteId = useId();
 
   const online = link === "open" && agent?.online === true;
   const offline = link === "open" && agent?.online === false;
@@ -109,6 +118,27 @@ export function Shell({ email, onLoggedOut }: ShellProps) {
 
   const dismissNotice = useCallback(() => setNotice(null), []);
 
+  const folderAdded = useCallback((folderId: string) => {
+    setPickerOpen(false);
+    setArrivedFolderId(folderId);
+  }, []);
+
+  const arrivedFolder = useMemo(() => {
+    if (arrivedFolderId === null) return null;
+    for (const window of windows ?? []) {
+      const folder = window.folders.find((candidate) => candidate.id === arrivedFolderId);
+      if (folder) return folder;
+    }
+    return null;
+  }, [arrivedFolderId, windows]);
+  const arrivedShown = arrivedFolder !== null;
+  // Counted from the moment the folder is in the list, which is when there is something to see.
+  useEffect(() => {
+    if (!arrivedShown) return;
+    const timer = setTimeout(() => setArrivedFolderId(null), ARRIVAL_SHOWN_MS);
+    return () => clearTimeout(timer);
+  }, [arrivedShown]);
+
   // A tapped notification opens its terminal. Once the Mac has listed its workspace again, a
   // terminal that is no longer there gives way to what its tab still holds, or to the workspace.
   useEffect(() => {
@@ -131,8 +161,17 @@ export function Shell({ email, onLoggedOut }: ShellProps) {
   }, [openSessionId]);
 
   const actions = useMemo<WorkspaceActions>(
-    () => ({ canAct: online, creatingIn, openTab, newTab, askToClose, notice, dismissNotice }),
-    [online, creatingIn, openTab, newTab, askToClose, notice, dismissNotice],
+    () => ({
+      canAct: online,
+      creatingIn,
+      openTab,
+      newTab,
+      askToClose,
+      arrivedFolderId,
+      notice,
+      dismissNotice,
+    }),
+    [online, creatingIn, openTab, newTab, askToClose, arrivedFolderId, notice, dismissNotice],
   );
 
   return (
@@ -184,20 +223,37 @@ export function Shell({ email, onLoggedOut }: ShellProps) {
                   <WorkspaceSkeleton />
                 )}
               </main>
-              <footer className="shrink-0 border-t bg-background px-safe py-3 wide:pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-                <Button
-                  size="touch"
-                  className="w-full"
-                  disabled={!online || creatingIn !== null}
-                  onClick={() => void newTab()}
-                >
-                  {creatingIn === LOOSE ? (
-                    <Spinner data-icon="inline-start" />
-                  ) : (
-                    <PlusIcon data-icon="inline-start" />
-                  )}
-                  New tab
-                </Button>
+              <footer className="flex shrink-0 flex-col gap-2 border-t bg-background px-safe py-3 wide:pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+                <div className="flex gap-2">
+                  <Button
+                    size="touch"
+                    className="min-w-0 flex-1"
+                    disabled={!online || creatingIn !== null}
+                    onClick={() => void newTab()}
+                  >
+                    {creatingIn === LOOSE ? (
+                      <Spinner data-icon="inline-start" />
+                    ) : (
+                      <PlusIcon data-icon="inline-start" />
+                    )}
+                    New tab
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="touch"
+                    disabled={!online || folderSupport === "no"}
+                    aria-describedby={online && folderSupport === "no" ? folderNoteId : undefined}
+                    onClick={() => setPickerOpen(true)}
+                  >
+                    <FolderPlusIcon data-icon="inline-start" />
+                    New folder
+                  </Button>
+                </div>
+                {online && folderSupport === "no" ? (
+                  <p id={folderNoteId} className="text-[0.75rem] leading-4 text-muted-foreground">
+                    New folder needs a newer Hako. {NEEDS_NEWER_HAKO}
+                  </p>
+                ) : null}
               </footer>
             </div>
 
@@ -235,6 +291,10 @@ export function Shell({ email, onLoggedOut }: ShellProps) {
         )}
       </div>
       <NotifyBanners />
+      <FolderPicker open={pickerOpen} onOpenChange={setPickerOpen} onAdded={folderAdded} />
+      <p role="status" className="sr-only">
+        {arrivedFolder ? `Folder ${arrivedFolder.name} is in the list.` : ""}
+      </p>
       <CloseTabDialog
         tab={closing}
         open={closeOpen}

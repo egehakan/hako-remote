@@ -54,6 +54,7 @@
 
   --animate-lid-lift: lid-lift 1.6s ease-in-out infinite;
   --animate-working: working 1.2s steps(4, end) infinite;
+  --animate-arrive: arrive 2.4s ease-out;
 
   @keyframes lid-lift {
     0%,
@@ -68,6 +69,19 @@
   @keyframes working {
     to {
       transform: rotate(360deg);
+    }
+  }
+
+  /* A folder that has just been added: lit for a moment, then like the others. */
+  @keyframes arrive {
+    0%,
+    40% {
+      background-color: color-mix(in oklab, var(--lid) 12%, var(--card));
+      box-shadow: 0 0 0 2px var(--lid);
+    }
+    100% {
+      background-color: var(--card);
+      box-shadow: 0 0 0 2px transparent;
     }
   }
 }

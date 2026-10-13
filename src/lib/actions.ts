@@ -1,4 +1,4 @@
-import type { TabCreateResult } from "@shared/protocol";
+import type { FolderCreateResult, TabCreateResult } from "@shared/protocol";
 import { relay } from "./connection";
 import { workspaceStore } from "./workspace";
 
@@ -18,4 +18,14 @@ export function activateTab(tabId: string): Promise<unknown> {
 
 export function closeTab(tabId: string): Promise<unknown> {
   return relay.request("tab.close", { tab_id: tabId });
+}
+
+/**
+ * Adds a folder for a directory on the Mac, in the window in front there, and returns its id once
+ * it is listed. A directory that is already a folder of that window gives that folder's id.
+ */
+export async function createFolder(directory: string): Promise<string> {
+  const created = await relay.request<FolderCreateResult>("folder.create", { directory });
+  await workspaceStore.refresh();
+  return created.folder_id;
 }

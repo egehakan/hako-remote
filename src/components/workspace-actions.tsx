@@ -10,6 +10,8 @@ export type WorkspaceActions = {
   openTab: (tab: Tab) => void;
   newTab: (folderId?: string) => void;
   askToClose: (tab: Tab) => void;
+  /** The folder that has just been added from here, which the list points out for a moment. */
+  arrivedFolderId: string | null;
   /** What went wrong with the last action, in words for the owner, until it is dismissed. */
   notice: string | null;
   dismissNotice: () => void;

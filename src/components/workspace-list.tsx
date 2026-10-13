@@ -1,5 +1,6 @@
 import type { Folder, Tab, Window } from "@shared/protocol";
 import { PlusIcon, XIcon } from "lucide-react";
+import { useEffect, useRef } from "react";
 import { AgentBadge } from "@/components/agent-badge";
 import { FolderIcon } from "@/components/folder-icon";
 import { Button } from "@/components/ui/button";
@@ -100,12 +101,24 @@ type FolderBoxProps = {
 
 /** A folder drawn as a box: a lid in the folder's colour, and its tabs inside. */
 function FolderBox({ folder, tabs, windowActive, selectedTabId }: FolderBoxProps) {
-  const { canAct, creatingIn, newTab } = useWorkspaceActions();
+  const { canAct, creatingIn, newTab, arrivedFolderId } = useWorkspaceActions();
   const creating = creatingIn === folder.id;
+  const arrived = arrivedFolderId === folder.id;
+  const box = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!arrived) return;
+    const calm = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    box.current?.scrollIntoView({ block: "center", behavior: calm ? "auto" : "smooth" });
+  }, [arrived]);
   return (
     <section
+      ref={box}
       aria-label={`Folder ${folder.name}`}
-      className="overflow-hidden rounded-lg border bg-card"
+      className={cn(
+        "overflow-hidden rounded-lg border bg-card",
+        // Without motion the ring simply stays for as long as the folder is pointed out.
+        arrived && "animate-arrive motion-reduce:ring-2 motion-reduce:ring-lid",
+      )}
     >
       <div
         aria-hidden="true"
