@@ -6,7 +6,8 @@ are open, what each terminal is running, and whether a coding agent in one of th
 waiting for you or done. You can open a terminal in a folder, bring a tab to the front and close
 one, and you can use any of those terminals live: a shell, or a full-screen program such as Claude
 Code, with the keys a phone keyboard lacks. You can also browse the folders of your projects, read a
-file with syntax colours, and make a small edit and save it.
+file with syntax colours, and make a small edit and save it; and you can see what changed in every
+repository in those folders, read the diffs, and commit, push and pull.
 
 Hako Remote is a companion to [Hako](https://github.com/egehakan/hako), a personal terminal that is
 based on Warp. Neither project is affiliated with, or endorsed by, Warp.
@@ -17,7 +18,8 @@ There are three parties, and the contract between them is [docs/protocol.md](doc
 
 The **agent** is the Hako desktop app. It never listens on the network. It dials out to the relay
 over a WebSocket, proves itself with a shared key, and then answers requests: list the workspace,
-create a tab, close a tab, attach to a terminal, list a directory, read and write a file.
+create a tab, close a tab, attach to a terminal, list a directory, read and write a file, run git
+in a repository.
 
 The **relay** is the server in this repository, a single Node process. It serves the web app, keeps
 the one account and its login sessions in SQLite, and passes messages between the agent and any
@@ -86,11 +88,39 @@ terminal's working directory.
 A Hako that does not have the file methods yet answers `not_supported`, and Files says to update
 it.
 
+## Source control
+
+**Source control** lists every git repository and worktree in the directories of your folders,
+repositories nested in others included: those with changes first, then those with something to
+push or pull, then the rest, with a filter over all of them. Each shows its branch (or the commit a
+detached HEAD is at), how many commits it is ahead and behind, and how many files changed.
+
+- **One repository.** Its changed files with what happened to each (modified, added, deleted,
+  renamed, untracked, in conflict) and the lines that went in and out. Commit, Push and Pull sit at
+  the bottom of the screen and on the repository's row in the list.
+- **A diff.** Tapping a file shows it against the last commit: line numbers, `+` and `−` beside
+  the colours, the changed part of a changed line marked, and a switch between wrapped lines and
+  lines that run on sideways. From there you step to the next changed file, open the file in Files,
+  or discard its changes. A binary file, and a diff over 1 MB, are named for what they are.
+- **Committing.** A commit takes every changed file in the repository, as the button on the Mac
+  does; there is no choosing among them. The message is written in a sheet that stays above the
+  keyboard, and the commit can be pushed straight after.
+- **Push and pull.** A branch that is not on a remote yet is published by its first push. Whatever
+  git prints is shown, with a line on what it means when a push was rejected, a pull stopped at
+  conflicts, or your Mac could not sign in. Nothing is tried a second time by itself.
+- **Discarding.** One file's changes, or all of them, after a question that says what will be lost,
+  untracked files included. It cannot be undone.
+
+The list is read again when you open it, when you ask, after everything you do, and when the page
+comes back to the foreground. A Hako that does not have these methods yet answers `not_supported`,
+and Source control says to update it.
+
 ## Run it locally
 
 You need Node 24 and pnpm, and Python 3 for the mock agent's shell. A mock agent stands in for the
 desktop app, with two windows of sample folders and tabs, fake terminals that print a line every
-second, one real shell, and a throwaway tree of sample files.
+second, one real shell, a throwaway tree of sample files, and git repositories in it. It needs
+`git` on the path.
 
 ```sh
 pnpm install
@@ -138,6 +168,31 @@ work, dangle and point outside.
 - `MOCK_FS=0` leaves the file methods out, as a desktop app from before they existed would.
 - `MOCK_FS_DELAY_MS=1500` makes every file answer slow.
 
+### The mock agent's repositories
+
+The folders of that tree are git repositories, built at start by the real `git` command line and
+removed with the tree. The source control methods run git in them and in nothing else, with a
+name and an email set in each repository and without reading your own git configuration.
+
+| Repository              | What it is for                                                                                                                                                    |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hako`                  | One change of every kind: modified, added, deleted, renamed, untracked, binary, a line far too long, a missing final newline. No remote.                          |
+| `hako/vendor/glyphs`    | A repository inside another one, on a detached HEAD.                                                                                                              |
+| `hako-remote`           | A diff of thousands of lines, and one over the 1 MB limit.                                                                                                        |
+| `Notes`                 | Nothing to commit.                                                                                                                                                |
+| `egehakan.com`          | A local bare repository as its remote. It starts one commit ahead and one behind, with the two in conflict: a push is rejected, and a pull stops at the conflict. |
+| `egehakan.com-redesign` | A linked worktree of it, on a branch that was never pushed, so its first push publishes the branch.                                                               |
+
+The mock agent prints the path of a script, `teammate-pushes.sh`, that pushes one more commit to
+that remote as someone else would. After it a push is rejected until you pull, and a pull is
+refused while `style.css` has changes that are not committed.
+
+- `MOCK_GIT=0` leaves the source control methods out, as a desktop app from before they existed
+  would.
+- `MOCK_GIT_EMPTY=1` answers that there are no repositories.
+- `MOCK_GIT_DELAY_MS=1500` makes every answer slow, and `MOCK_GIT_NETWORK_DELAY_MS=25000` makes a
+  push or a pull take longer than the relay waits for an ordinary request.
+
 Two more things help when working on the terminal:
 
 - `kill -USR1 <pid of the mock agent>` drops the next output frame of every terminal that is being
@@ -179,8 +234,8 @@ Then point the desktop app at `wss://<your domain>/ws/agent` with the same `HAKO
 
 Be clear about what this is: **it puts a shell on your computer on the public internet, behind one
 password.** Anyone who has that password, or a logged-in session, can do what you can do in a
-terminal on your Mac, and can read and rewrite any file you can. Anyone who has the agent key can
-pose as your Mac to the relay.
+terminal on your Mac, can read and rewrite any file you can, and can commit, push and throw away
+changes in your repositories. Anyone who has the agent key can pose as your Mac to the relay.
 
 What stands in the way:
 
