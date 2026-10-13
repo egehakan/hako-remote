@@ -18,6 +18,13 @@ type WorkspaceListProps = {
 
 export function WorkspaceList({ windows, selectedTabId }: WorkspaceListProps) {
   const several = windows.length > 1;
+  if (windows.length === 0) {
+    return (
+      <p className="px-1 py-8 text-center text-sm leading-6 text-muted-foreground">
+        No window is open in Hako on your Mac. A new tab opens one.
+      </p>
+    );
+  }
   return (
     <div className="flex flex-col gap-8">
       {windows.map((window, index) => (

@@ -134,11 +134,11 @@ Ids are strings chosen by the agent. A client never builds one.
 
 | Method | Params | Result |
 |---|---|---|
-| `app.info` | | `{ name, version, hostname, protocol: 1 }`. `name` is the Mac's computer name as System Settings shows it ("Ege's MacBook Pro"), `hostname` its network name, `version` the app's version. |
+| `app.info` | | `{ name, version, hostname, protocol: 1 }`. `name` is the Mac's computer name as System Settings shows it ("Ege's MacBook Pro"), `hostname` its network name, `version` the app's version, which is the string `dev` on a local build. |
 | `workspace.list` | | `{ windows: Window[] }` |
-| `tab.create` | `{ window_id?, folder_id?, directory? }` | `{ tab_id, session_id }`. Opens a tab with one terminal and makes it the active tab. With `folder_id` the tab joins that folder, in the folder's window, and the terminal opens in the folder's directory (`window_id` and `directory` are then ignored). Without `window_id` the active window is used; without `directory`, the app's default. |
+| `tab.create` | `{ window_id?, folder_id?, directory? }` | `{ tab_id, session_id }`. Opens a tab with one terminal and makes it the active tab. With `folder_id` the tab joins that folder, in the folder's window, and the terminal opens in the folder's directory (`window_id` and `directory` are then ignored). Without `window_id` the active window is used; without `directory`, the app's default. With no window open at all, a new window is opened and the new tab is its first. |
 | `tab.activate` | `{ tab_id }` | `{}`. Also brings that tab, and its window, forward on the Mac. |
-| `tab.close` | `{ tab_id }` | `{}`. The client confirms first; the Mac does not ask again. |
+| `tab.close` | `{ tab_id }` | `{}`. The client confirms first; the Mac does not ask again. Fails with `failed` and a message for the owner when the tab holds unsaved edits or when closing it would quit the app; the client shows the message and does not retry. |
 
 ```ts
 type Window = { id: string; active: boolean; folders: Folder[]; tabs: Tab[] };
@@ -156,14 +156,21 @@ type Pane = {
 ```
 
 `tabs` is in display order. A folder with no tabs is still listed in `folders`. One window has
-`active: true` (the frontmost one) and each window has one active tab.
+`active: true` (the frontmost one) and each window has one active tab. `windows` is empty when the
+app runs with no window open.
+
+- `Pane.agent` is null until the session has reported a status. A terminal can run a coding agent
+  and still have `agent: null` (older agent plugins report nothing), so null means "no status to
+  show", never "no agent" and never an error.
+- A tab group without a directory is not a folder: it is left out of `folders`, and its tabs have
+  `folder_id: null`.
 
 - `Folder.color` is `#RRGGBB`, or null when the folder has no colour.
 - `Folder.icon` is null for the default icon, `material:<key>` for one of the app's bundled Material
   folder icons (for example `material:folder-src`), or `text:<text>` for a short text icon, usually
   one emoji. A client shows the default icon for a key it does not know.
-- `Folder.name` is the name to display: the folder's own name, or the last part of `directory` when
-  it has none.
+- `Folder.name` is the name to display, as the desktop sidebar shows it. It need not be the last
+  part of `directory`: the home folder is named "Home".
 
 Event `workspace.changed` (`{}`) is sent, at most twice a second, whenever the result of
 `workspace.list` would differ. The client calls `workspace.list` again.

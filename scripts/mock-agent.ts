@@ -543,6 +543,14 @@ const methods: Record<string, (params: Record<string, unknown>) => unknown> = {
 
   "tab.close": (params) => {
     const found = findTab(params.tab_id);
+    // The real app refuses to close a tab with unsaved edits; here every open file counts as one.
+    const unsaved = found.tab.panes.find((pane) => pane.kind === "file");
+    if (unsaved) {
+      throw new RpcFailure(
+        "failed",
+        `${unsaved.title} has unsaved changes. Save or discard them on your Mac first.`,
+      );
+    }
     removeTab(found.window, found.tab);
     return {};
   },
