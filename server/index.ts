@@ -35,7 +35,7 @@ const app = createApp({
   onSessionsEnded: (hashes) => relay.closeSessions(hashes),
 });
 
-const server = serve({ fetch: app.fetch, port: config.port, hostname: "0.0.0.0" }, (info) => {
+const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
   log(`listening on port ${info.port}, serving ${config.origins.join(", ")}`);
 }) as Server;
 attachWebSockets(server, { config, relay, sessions });

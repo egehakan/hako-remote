@@ -1,0 +1,10 @@
+node_modules
+dist
+.data
+.env
+.env.*
+.git
+brand
+docs
+test
+*.log
