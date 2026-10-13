@@ -4,13 +4,14 @@ A phone-first web app, and the relay server behind it, for seeing and controllin
 [Hako](https://github.com/egehakan/hako) terminal on your Mac from a browser: which folders and tabs
 are open, what each terminal is running, and whether a coding agent in one of them is working,
 waiting for you or done. You can open a terminal in a folder, bring a tab to the front and close
-one, and you can use any of those terminals live: a shell, or a full-screen program such as Claude
-Code, with the keys a phone keyboard lacks. You can also browse the folders of your projects, read a
-file with syntax colours, make a small edit and save it, save any file to your phone and put files
-from your phone into a folder on the Mac; you can hand Claude Code a picture from your phone in a
-terminal; and you can see what changed in every repository in those folders, read the diffs, and
-commit, push and pull. And your phone is told
-when an agent is waiting for you or has finished, and when a long command is done.
+one, and add a folder for any directory on the Mac ("New folder" on the Terminals screen picks the
+directory, and can make a new one first). You can use any of those terminals live: a shell, or a
+full-screen program such as Claude Code, with the keys a phone keyboard lacks. You can also browse
+the folders of your projects, read a file with syntax colours, make a small edit and save it, save
+any file to your phone and put files from your phone into a folder on the Mac; you can hand Claude
+Code a picture from your phone in a terminal; and you can see what changed in every repository in
+those folders, read the diffs, and commit, push and pull. And your phone is told when an agent is
+waiting for you or has finished, and when a long command is done.
 
 Hako Remote is a companion to [Hako](https://github.com/egehakan/hako), a personal terminal that is
 based on Warp. Neither project is affiliated with, or endorsed by, Warp.
@@ -227,6 +228,8 @@ work, dangle and point outside.
 - `MOCK_TRANSFERS=0` leaves out only the transfer methods, as the desktop app before them would;
   `MOCK_UPLOAD_IDLE_MS` shortens the 15 minutes an untouched upload is kept.
 - `MOCK_FS_DELAY_MS=1500` makes every file answer slow.
+- `MOCK_FOLDERS=0` leaves out adding a folder and making a directory, as a desktop app from before
+  them would, and "New folder" then says to update Hako.
 
 ### The mock agent's repositories
 
