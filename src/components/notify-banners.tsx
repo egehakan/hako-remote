@@ -48,7 +48,13 @@ function BannerCard({ banner }: { banner: Banner }) {
   const { notification } = banner;
   const kind = KIND[notification.kind];
   return (
-    <div className="pointer-events-auto flex w-full max-w-md animate-in items-stretch overflow-hidden rounded-xl border bg-popover shadow-[0_12px_32px_-8px_rgb(0_0_0/0.7)] duration-200 fade-in slide-in-from-top-3">
+    <div
+      onPointerEnter={() => banners.hold(banner.id)}
+      onPointerLeave={() => banners.release(banner.id)}
+      onFocus={() => banners.hold(banner.id)}
+      onBlur={() => banners.release(banner.id)}
+      className="pointer-events-auto flex w-full max-w-md animate-in items-stretch overflow-hidden rounded-xl border bg-popover shadow-[0_12px_32px_-8px_rgb(0_0_0/0.7)] duration-200 fade-in slide-in-from-top-3"
+    >
       <span
         aria-hidden="true"
         className={cn(
@@ -85,7 +91,7 @@ function BannerCard({ banner }: { banner: Banner }) {
         variant="ghost"
         size="icon-touch"
         className="my-1 mr-1 self-center text-muted-foreground"
-        aria-label="Dismiss"
+        aria-label={`Dismiss: ${notification.title}`}
         onClick={() => banners.dismiss(banner.id)}
       >
         <XIcon />

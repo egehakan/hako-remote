@@ -505,6 +505,18 @@ export const banners = {
   dismiss(id: number): void {
     setBanners(shownBanners.filter((banner) => banner.id !== id));
   },
+  /** Keeps a banner for as long as the pointer or the keyboard's focus is on it. */
+  hold(id: number): void {
+    window.clearTimeout(bannerTimers.get(id));
+    bannerTimers.delete(id);
+  },
+  release(id: number): void {
+    if (bannerTimers.has(id) || !shownBanners.some((banner) => banner.id === id)) return;
+    bannerTimers.set(
+      id,
+      window.setTimeout(() => banners.dismiss(id), BANNER_MS),
+    );
+  },
   dismissSession(sessionId: string): void {
     setBanners(shownBanners.filter((banner) => banner.notification.session_id !== sessionId));
   },
@@ -530,8 +542,5 @@ relay.on("notify", (data) => {
     (shown) => shown.notification.session_id !== notification.session_id,
   );
   setBanners([banner, ...others].slice(0, BANNERS_SHOWN));
-  bannerTimers.set(
-    banner.id,
-    window.setTimeout(() => banners.dismiss(banner.id), BANNER_MS),
-  );
+  banners.release(banner.id);
 });
