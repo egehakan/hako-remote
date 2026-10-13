@@ -5,7 +5,8 @@ A phone-first web app, and the relay server behind it, for seeing and controllin
 are open, what each terminal is running, and whether a coding agent in one of them is working,
 waiting for you or done. You can open a terminal in a folder, bring a tab to the front and close
 one, and you can use any of those terminals live: a shell, or a full-screen program such as Claude
-Code, with the keys a phone keyboard lacks.
+Code, with the keys a phone keyboard lacks. You can also browse the folders of your projects, read a
+file with syntax colours, and make a small edit and save it.
 
 Hako Remote is a companion to [Hako](https://github.com/egehakan/hako), a personal terminal that is
 based on Warp. Neither project is affiliated with, or endorsed by, Warp.
@@ -16,7 +17,7 @@ There are three parties, and the contract between them is [docs/protocol.md](doc
 
 The **agent** is the Hako desktop app. It never listens on the network. It dials out to the relay
 over a WebSocket, proves itself with a shared key, and then answers requests: list the workspace,
-create a tab, close a tab, attach to a terminal.
+create a tab, close a tab, attach to a terminal, list a directory, read and write a file.
 
 The **relay** is the server in this repository, a single Node process. It serves the web app, keeps
 the one account and its login sessions in SQLite, and passes messages between the agent and any
@@ -63,11 +64,33 @@ selection, copy and paste directly, and the key bar is still there. On a Mac key
 the characters of your layout, as in any Mac app; for Alt as a terminal modifier use Esc as a
 prefix, or the sticky Alt under "more".
 
+## Files
+
+**Files** starts from the directories of your folders and of your terminals, and from your home
+directory, and drills down from there. The folder button in a terminal's title bar opens that
+terminal's working directory.
+
+- **Browsing.** One directory at a time, directories first, with a path to tap your way back up, a
+  filter for the directory you are in, and a switch for hidden files. Each starting point remembers
+  where you left it. A directory with thousands of entries scrolls like a short one.
+- **Reading.** Text opens with syntax colours, line numbers, a soft-wrap switch and find. Markdown
+  opens as source, with a switch to the rendered document; raw HTML in it is shown as text, never
+  run. Pictures (PNG, JPEG, GIF, WebP, SVG) open as pictures, and two fingers zoom into them. Text
+  over 2 MB, pictures over 5 MB and binary files are named for what they are, with their size.
+- **Editing.** Edit turns the view into an editor, with a bar of Tab, undo, redo and the symbols a
+  phone keyboard buries. Save writes the file back. If the file changed on your Mac in the
+  meantime, nothing is written and you choose: reload the Mac's version, or overwrite it with
+  yours. Leaving with unsaved changes asks first.
+- Creating, renaming, moving and deleting stay on the Mac.
+
+A Hako that does not have the file methods yet answers `not_supported`, and Files says to update
+it.
+
 ## Run it locally
 
 You need Node 24 and pnpm, and Python 3 for the mock agent's shell. A mock agent stands in for the
 desktop app, with two windows of sample folders and tabs, fake terminals that print a line every
-second, and one real shell.
+second, one real shell, and a throwaway tree of sample files.
 
 ```sh
 pnpm install
@@ -96,9 +119,24 @@ it as you. So:
 - Against a relay on `localhost` the shell is on by default. Against any other relay it is off
   unless you start the mock agent with `MOCK_SHELL=1`. `MOCK_SHELL=0` turns it off everywhere.
 - The shell is `zsh` (or `sh`) started by `scripts/pty-helper.py`, a small Python helper that gives
-  it a pseudo-terminal without a native Node module. It starts in a new temporary directory, or in
-  `MOCK_SHELL_DIR`, with that directory as its home and a clean environment, so it sees neither your
-  dotfiles nor the secrets in `.env`. It can still reach everything your user can.
+  it a pseudo-terminal without a native Node module. It starts in the mock agent's temporary
+  directory, or in `MOCK_SHELL_DIR`, with that directory as its home and a clean environment, so it
+  sees neither your dotfiles nor the secrets in `.env`. It can still reach everything your user can.
+
+### The mock agent's files
+
+At start the mock agent builds a tree of sample files in a new temporary directory and removes it
+when it stops. The sample workspace lives in that tree, and so does the real shell, so its folders
+can be browsed and what the shell changes shows up. The file methods serve that tree and refuse
+every path outside it. It holds a file of each highlighted language, a Markdown file with things
+that must stay inert, pictures, a text file and a picture over the limits, a binary file, a
+directory with 5,000 entries, a read-only file, a directory that may not be read, and symlinks that
+work, dangle and point outside.
+
+- `kill -USR2 <pid of the mock agent>` rewrites `fixtures/conflict.txt`, which is how to see a
+  save being refused because the file changed.
+- `MOCK_FS=0` leaves the file methods out, as a desktop app from before they existed would.
+- `MOCK_FS_DELAY_MS=1500` makes every file answer slow.
 
 Two more things help when working on the terminal:
 
@@ -141,7 +179,8 @@ Then point the desktop app at `wss://<your domain>/ws/agent` with the same `HAKO
 
 Be clear about what this is: **it puts a shell on your computer on the public internet, behind one
 password.** Anyone who has that password, or a logged-in session, can do what you can do in a
-terminal on your Mac. Anyone who has the agent key can pose as your Mac to the relay.
+terminal on your Mac, and can read and rewrite any file you can. Anyone who has the agent key can
+pose as your Mac to the relay.
 
 What stands in the way:
 
