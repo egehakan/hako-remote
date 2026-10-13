@@ -29,9 +29,11 @@
 //
 // The folders of that tree are git repositories, built at start with the real `git` command line,
 // and the source control methods run git in them and refuse every repository outside the tree.
-// MOCK_GIT=0 leaves those methods out, MOCK_GIT_EMPTY=1 answers that there are no repositories,
-// MOCK_GIT_DELAY_MS=1500 makes every answer slow, and MOCK_GIT_NETWORK_DELAY_MS=25000 makes push
-// and pull take longer than the relay waits for an ordinary request.
+// MOCK_GIT=0 leaves those methods out, MOCK_GIT_HISTORY=0 leaves out only branches, switching and
+// the commit graph, MOCK_GIT_EMPTY=1 answers that there are no repositories,
+// MOCK_GIT_DELAY_MS=1500 makes every answer slow, MOCK_GIT_NETWORK_DELAY_MS=25000 makes push and
+// pull take longer than the relay waits for an ordinary request, and MOCK_GIT_SWITCH_DELAY_MS=65000
+// makes a switch of branch outlast the minute the client waits for one.
 //
 // A `notify` event is sent on demand: press w (an agent waits), d (an agent has finished), c (a long
 // command has finished) or b (four in a second, to see the relay collapse them) in this console,
@@ -688,6 +690,8 @@ const gitMethods: Record<string, Method> = GIT_ENABLED
       empty: process.env.MOCK_GIT_EMPTY === "1",
       networkDelayMs: Number(process.env.MOCK_GIT_NETWORK_DELAY_MS ?? 0),
       onChanged: (repo) => sendEvent("git.changed", { repo }),
+      history: process.env.MOCK_GIT_HISTORY !== "0",
+      switchDelayMs: Number(process.env.MOCK_GIT_SWITCH_DELAY_MS ?? 0),
     })
   : {};
 
