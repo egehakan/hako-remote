@@ -17,6 +17,12 @@
 // be browsed. `kill -USR2 <pid>` rewrites fixtures/conflict.txt behind the client's back.
 // MOCK_FS=0 leaves the file methods out, as an older desktop app would; MOCK_FS_DELAY_MS=1500
 // makes them slow.
+//
+// The folders of that tree are git repositories, built at start with the real `git` command line,
+// and the source control methods run git in them and refuse every repository outside the tree.
+// MOCK_GIT=0 leaves those methods out, MOCK_GIT_EMPTY=1 answers that there are no repositories,
+// MOCK_GIT_DELAY_MS=1500 makes every answer slow, and MOCK_GIT_NETWORK_DELAY_MS=25000 makes push
+// and pull take longer than the relay waits for an ordinary request.
 
 import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
@@ -36,6 +42,7 @@ import {
   type TerminalTheme,
   type Window,
 } from "../shared/protocol.ts";
+import { createGitFixture, createGitMethods, GitFailure } from "./mock-git.ts";
 import {
   createFixture,
   createFsMethods,
@@ -48,6 +55,8 @@ const RELAY_URL = process.env.RELAY_URL ?? `ws://localhost:${process.env.PORT ??
 const AGENT_KEY = process.env.HAKO_AGENT_KEY ?? "";
 const FS_ENABLED = process.env.MOCK_FS !== "0";
 const FS_DELAY_MS = Number(process.env.MOCK_FS_DELAY_MS ?? 0);
+const GIT_ENABLED = process.env.MOCK_GIT !== "0";
+const GIT_DELAY_MS = Number(process.env.MOCK_GIT_DELAY_MS ?? 0);
 const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 32;
 const SCROLLBACK_BYTES = 64 * 1024;
@@ -62,6 +71,7 @@ if (AGENT_KEY === "") {
 
 /** The home directory of the sample workspace: the root of the fixture tree. */
 const HOME = createFixture();
+const GIT_FIXTURE = GIT_ENABLED ? createGitFixture(HOME) : null;
 
 class RpcFailure extends Error {
   readonly code: ErrorCode;
@@ -507,6 +517,7 @@ const THEME: TerminalTheme = {
   font_size: 13,
 };
 
+/** A method answers at once or, when it has to wait for something, with a promise. */
 type Method = (params: Record<string, unknown>) => unknown;
 
 const methods: Record<string, Method> = {
@@ -589,6 +600,13 @@ const methods: Record<string, Method> = {
 };
 
 const fsMethods: Record<string, Method> = FS_ENABLED ? createFsMethods(HOME, () => windows) : {};
+const gitMethods: Record<string, Method> = GIT_ENABLED
+  ? createGitMethods(HOME, () => windows, {
+      empty: process.env.MOCK_GIT_EMPTY === "1",
+      networkDelayMs: Number(process.env.MOCK_GIT_NETWORK_DELAY_MS ?? 0),
+      onChanged: (repo) => sendEvent("git.changed", { repo }),
+    })
+  : {};
 
 function handleFrame(text: string): void {
   let frame: Record<string, unknown>;
@@ -610,8 +628,12 @@ function handleFrame(text: string): void {
   if (frame.t !== "req" || typeof frame.id !== "string" || typeof frame.method !== "string") return;
 
   const id = frame.id;
-  const slow = FS_DELAY_MS > 0 && Object.hasOwn(fsMethods, frame.method);
-  const method = methods[frame.method] ?? fsMethods[frame.method];
+  const delay = Object.hasOwn(fsMethods, frame.method)
+    ? FS_DELAY_MS
+    : Object.hasOwn(gitMethods, frame.method)
+      ? GIT_DELAY_MS
+      : 0;
+  const method = methods[frame.method] ?? fsMethods[frame.method] ?? gitMethods[frame.method];
   if (!method) {
     send({
       t: "res",
@@ -621,16 +643,27 @@ function handleFrame(text: string): void {
     });
     return;
   }
+  const fail = (error: unknown) => {
+    const known =
+      error instanceof RpcFailure || error instanceof FsFailure || error instanceof GitFailure;
+    const message = error instanceof Error ? error.message : "Failed";
+    send({ t: "res", id, ok: false, error: { code: known ? error.code : "failed", message } });
+  };
   const answer = () => {
     try {
-      send({ t: "res", id, ok: true, result: method(params) });
+      const result = method(params);
+      // An answer that is ready is sent in the same turn: a terminal's first output must not
+      // overtake the answer to its `term.subscribe`.
+      if (result instanceof Promise) {
+        result.then((value) => send({ t: "res", id, ok: true, result: value }), fail);
+      } else {
+        send({ t: "res", id, ok: true, result });
+      }
     } catch (error) {
-      const known = error instanceof RpcFailure || error instanceof FsFailure;
-      const message = error instanceof Error ? error.message : "Failed";
-      send({ t: "res", id, ok: false, error: { code: known ? error.code : "failed", message } });
+      fail(error);
     }
   };
-  if (slow) setTimeout(answer, FS_DELAY_MS);
+  if (delay > 0) setTimeout(answer, delay);
   else answer();
 }
 
@@ -705,6 +738,14 @@ console.log(
     ? `serving files from ${HOME} (pid ${process.pid})`
     : "the file methods are off (MOCK_FS=0)",
 );
+
+if (GIT_FIXTURE) {
+  console.log(
+    `a teammate pushes to the remote of egehakan.com with: ${GIT_FIXTURE.teammateScript}`,
+  );
+} else {
+  console.log("the source control methods are off (MOCK_GIT=0)");
+}
 
 if (SHELL_ENABLED) {
   console.log(
