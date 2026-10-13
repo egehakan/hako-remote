@@ -296,6 +296,13 @@ arrive as stray input. Neither the snapshot nor the stream needs to hide such re
 - `term.resize` is the "fit to phone" switch: it resizes the terminal (and its PTY) to `cols` x
   `rows`, both whole numbers of at least 2, and answers with the size the terminal really has
   afterwards, which the client then uses. The last request wins.
+- Fitting only ever makes the terminal smaller. The client never asks for more columns or more
+  rows than the terminal has on the Mac by itself: it remembers the last size the Mac reported
+  while it had asked for none (the `cols` and `rows` of `term.subscribe`, and every `term.size`
+  that arrives before its `term.resize` or after its `term.release_size`), and sends
+  `min(wanted, that)` for each of the two numbers. A browser window larger than the Mac's pane
+  therefore asks for the pane's own size. A pane resized beyond what its window shows loses its
+  last rows on the Mac, which is where a full-screen program draws.
 - `term.release_size` gives the size back to the Mac, which returns the terminal to the size its
   window gives it. `term.unsubscribe` does the same, and so does losing the relay connection, so a
   phone that goes away does not leave the terminal at phone size. With several clients the size is

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { capFit } from "../src/lib/terminal/fit.ts";
 import { diffInput } from "../src/lib/terminal/input-diff.ts";
 import {
   activeSticky,
@@ -112,4 +113,12 @@ test("text field: a composition or correction that rewrites the word is erased a
 test("text field: emoji count as one character and are never split", () => {
   assert.deepEqual(diffInput(" 😀", " "), { erase: 1, insert: "" });
   assert.deepEqual(diffInput(" 😀", " 😁"), { erase: 1, insert: "😁" });
+});
+
+test("fitting never asks the Mac for more columns or rows than its own terminal has", () => {
+  const mac = { cols: 124, rows: 47 };
+  assert.deepEqual(capFit({ cols: 138, rows: 52 }, mac), mac);
+  assert.deepEqual(capFit({ cols: 45, rows: 30 }, mac), { cols: 45, rows: 30 });
+  assert.deepEqual(capFit({ cols: 100, rows: 60 }, mac), { cols: 100, rows: 47 });
+  assert.deepEqual(capFit({ cols: 138, rows: 52 }, null), { cols: 138, rows: 52 });
 });

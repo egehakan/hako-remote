@@ -9,6 +9,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
+import { useWide } from "@/lib/hooks";
 import type { Size } from "@/lib/terminal/session";
 
 type SheetContentProps = ComponentProps<typeof SheetContent>;
@@ -44,6 +45,9 @@ export function ViewSheet({
   canZoomIn,
   finalFocus,
 }: ViewSheetProps) {
+  // A window can hold more than the pane on the Mac; a phone never does. The switch only ever
+  // makes the Mac's terminal smaller, and beside a keyboard and a mouse it should say so.
+  const wide = useWide();
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
@@ -65,11 +69,17 @@ export function ViewSheet({
         <div className="flex flex-col divide-y border-y">
           <label className="flex min-h-16 items-center gap-4 px-4 py-3">
             <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span className="text-base font-medium">Fit to phone</span>
+              <span className="text-base font-medium">
+                {wide ? "Shrink to this window" : "Fit to phone"}
+              </span>
               <span className="text-[0.8125rem] leading-5 text-muted-foreground">
-                {fitPhone
-                  ? "Your Mac’s terminal is resized to this screen. It gets its own size back when you leave or turn this off."
-                  : "Resizes the terminal on your Mac to this screen, so text is readable without zooming. Off, you see the Mac’s size, scaled down."}
+                {wide
+                  ? fitPhone
+                    ? "Your Mac’s terminal is no larger than this window holds, and never larger than it is on your Mac. It gets its own size back when you leave or turn this off."
+                    : "Makes the terminal on your Mac smaller, down to what this window holds, so nothing is scaled. It is never made larger than it is on your Mac."
+                  : fitPhone
+                    ? "Your Mac’s terminal is resized to this screen. It gets its own size back when you leave or turn this off."
+                    : "Resizes the terminal on your Mac to this screen, so text is readable without zooming. Off, you see the Mac’s size, scaled down."}
               </span>
             </span>
             <Switch checked={fitPhone} onCheckedChange={onFitPhoneChange} />

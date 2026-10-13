@@ -3,6 +3,7 @@
 
 import type { OutputFrame } from "@shared/frames";
 import type { TermSubscribeResult } from "@shared/protocol";
+import { capFit } from "./fit";
 import { RpcFailure, relay } from "../connection";
 import { SeqTracker } from "./seq";
 
@@ -80,6 +81,8 @@ export class TerminalSession {
   private fit: Size | null = null;
   /** The size the Mac was last asked for and has not been told to forget. */
   private fitSent: Size | null = null;
+  /** The size the terminal has on the Mac by itself: the last one reported while none was asked for. */
+  private macSize: Size | null = null;
 
   constructor(sessionId: string, sink: TerminalSink) {
     this.sessionId = sessionId;
@@ -186,6 +189,7 @@ export class TerminalSession {
         if (gap) break;
         gap = !this.apply(frame);
       }
+      this.noteMacSize(result.cols, result.rows);
       this.set({ phase: "live", reason: null, cols: result.cols, rows: result.rows });
       if (!gap) {
         this.syncFit();
@@ -214,9 +218,15 @@ export class TerminalSession {
     const size = data as { session_id?: string; cols?: number; rows?: number };
     if (size.session_id !== this.sessionId) return;
     if (typeof size.cols !== "number" || typeof size.rows !== "number") return;
+    this.noteMacSize(size.cols, size.rows);
     this.sink.resize(size.cols, size.rows);
     this.set({ cols: size.cols, rows: size.rows });
   };
+
+  /** A size reported while this screen asked for none is the Mac's own, and the most to ask for. */
+  private noteMacSize(cols: number, rows: number): void {
+    if (this.fitSent === null) this.macSize = { cols, rows };
+  }
 
   private readonly onClosed = (data: unknown): void => {
     if ((data as { session_id?: string }).session_id !== this.sessionId) return;
@@ -253,7 +263,7 @@ export class TerminalSession {
 
   private syncFit(): void {
     if (!this.live) return;
-    const wanted = this.fit;
+    const wanted = this.fit === null ? null : capFit(this.fit, this.macSize);
     if (wanted === null) {
       if (this.fitSent === null) return;
       this.fitSent = null;
