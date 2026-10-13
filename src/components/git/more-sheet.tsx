@@ -3,6 +3,7 @@ import {
   ArrowUpIcon,
   CloudUploadIcon,
   FolderOpenIcon,
+  GitBranchIcon,
   GitCommitHorizontalIcon,
   Trash2Icon,
 } from "lucide-react";
@@ -16,8 +17,9 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { NEEDS_NEWER_HAKO } from "@/lib/errors";
 import { branchLabel, isUnpublished, plural } from "@/lib/git/repos";
-import { useActivity, useRepo } from "@/lib/git/store";
+import { useActivity, useHistorySupport, useRepo } from "@/lib/git/store";
 import { tildify } from "@/lib/paths";
 import { navigate, routes } from "@/lib/route";
 import { cn } from "@/lib/utils";
@@ -74,6 +76,7 @@ export function MoreSheet({ repoPath, open, onOpenChange }: MoreSheetProps) {
   const blocked = !ui.canAct || activity?.state === "running";
   const close = () => onOpenChange(false);
   const unpublished = repo !== null && isUnpublished(repo);
+  const support = useHistorySupport();
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -139,6 +142,22 @@ export function MoreSheet({ repoPath, open, onOpenChange }: MoreSheetProps) {
               onSelect={() => {
                 close();
                 ui.pull(repo);
+              }}
+            />
+            <Item
+              icon={GitBranchIcon}
+              label="Switch branch…"
+              detail={
+                support === "no"
+                  ? `Needs a newer Hako. ${NEEDS_NEWER_HAKO}`
+                  : repo.branch === null
+                    ? "HEAD is detached: pick a branch, or make one here"
+                    : "Another branch, or a new one from here"
+              }
+              disabled={blocked || support === "no"}
+              onSelect={() => {
+                close();
+                ui.pickBranch(repo);
               }}
             />
             <Item

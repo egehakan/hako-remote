@@ -9,19 +9,27 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
+import { NEEDS_NEWER_HAKO } from "@/lib/errors";
 import type { GitError } from "@/lib/git/store";
 
 type GitProblemProps = {
   error: GitError;
   /** What could not be read, as it reads in a sentence. */
-  what: "repositories" | "repository" | "diff";
+  what: "repositories" | "repository" | "diff" | "branches" | "graph" | "commit";
   /** Buttons that lead somewhere useful from here. */
   children?: ReactNode;
 };
 
 /** Says why the Mac did not hand over what was asked, in git's own words where it gave any. */
 export function GitProblem({ error, what, children }: GitProblemProps) {
-  const subject = what === "repositories" ? "your repositories" : `this ${what}`;
+  const subject =
+    what === "repositories"
+      ? "your repositories"
+      : what === "branches"
+        ? "the branches"
+        : what === "graph"
+          ? "the graph"
+          : `this ${what}`;
   let Icon = CircleQuestionMarkIcon;
   let title = `Couldn’t read ${subject}`;
   let detail: ReactNode = "Your Mac reported a problem. Try again.";
@@ -30,16 +38,28 @@ export function GitProblem({ error, what, children }: GitProblemProps) {
   switch (error.code) {
     case "not_supported":
       Icon = ArrowUpCircleIcon;
-      title = "Source control needs a newer Hako";
-      detail =
-        "Update Hako on your Mac to use this. The version running there can’t share its repositories with this app yet.";
+      if (what === "branches" || what === "graph" || what === "commit") {
+        title = "Branches and history need a newer Hako";
+        detail = `${NEEDS_NEWER_HAKO} The version running there can’t switch branches or show commits from here yet.`;
+      } else {
+        title = "Source control needs a newer Hako";
+        detail =
+          "Update Hako on your Mac to use this. The version running there can’t share its repositories with this app yet.";
+      }
       quote = null;
       break;
     case "not_found":
       Icon = FolderXIcon;
       title =
-        what === "diff" ? "This file isn’t there any more" : "This repository isn’t there any more";
-      detail = "It was moved, renamed or deleted on your Mac.";
+        what === "diff"
+          ? "This file isn’t there any more"
+          : what === "commit"
+            ? "This commit isn’t there any more"
+            : "This repository isn’t there any more";
+      detail =
+        what === "commit"
+          ? "The history of this repository was rewritten on your Mac, or the commit was never in it."
+          : "It was moved, renamed or deleted on your Mac.";
       quote = null;
       break;
     case "agent_offline":

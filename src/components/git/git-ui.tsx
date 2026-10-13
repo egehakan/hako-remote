@@ -1,10 +1,11 @@
 import type { GitFile, GitRepo } from "@shared/protocol";
 import { createContext, type ReactNode, use, useCallback, useMemo, useState } from "react";
+import { BranchPicker } from "@/components/git/branch-picker";
 import { CommitSheet } from "@/components/git/commit-sheet";
 import { DiscardDialog } from "@/components/git/discard-dialog";
 import { MoreSheet } from "@/components/git/more-sheet";
 import { OutputSheet } from "@/components/git/output-sheet";
-import { discard, pull, push } from "@/lib/git/store";
+import { discard, pull, push, switchBranch, type SwitchTarget } from "@/lib/git/store";
 import { useConnection } from "@/lib/hooks";
 import { navigate, routes } from "@/lib/route";
 
@@ -16,6 +17,8 @@ export type GitUi = {
   askDiscard: (repo: GitRepo, file: GitFile | null) => void;
   showMore: (repo: GitRepo) => void;
   showOutput: (repo: GitRepo) => void;
+  /** Opens the list of branches to switch to, with the making of a new one. */
+  pickBranch: (repo: GitRepo) => void;
   push: (repo: GitRepo) => void;
   pull: (repo: GitRepo) => void;
 };
@@ -45,6 +48,8 @@ export function GitUiProvider({ children }: { children: ReactNode }) {
   const [outputOpen, setOutputOpen] = useState(false);
   const [discarding, setDiscarding] = useState<Discarding | null>(null);
   const [discardOpen, setDiscardOpen] = useState(false);
+  const [branching, setBranching] = useState<string | null>(null);
+  const [branchOpen, setBranchOpen] = useState(false);
 
   const showOutput = useCallback((repo: GitRepo) => {
     setOutput(repo.path);
@@ -64,6 +69,16 @@ export function GitUiProvider({ children }: { children: ReactNode }) {
     (repo: GitRepo) => {
       void pull(repo).then((outcome) => {
         if (!outcome.ok) showOutput(repo);
+      });
+    },
+    [showOutput],
+  );
+
+  // Git refuses a switch that would lose something, and what it said is shown at once.
+  const runSwitch = useCallback(
+    (repo: GitRepo, target: SwitchTarget) => {
+      void switchBranch(repo, target).then((outcome) => {
+        if (!outcome.ok && !outcome.pending) showOutput(repo);
       });
     },
     [showOutput],
@@ -103,6 +118,10 @@ export function GitUiProvider({ children }: { children: ReactNode }) {
         setMoreOpen(true);
       },
       showOutput,
+      pickBranch: (repo) => {
+        setBranching(repo.path);
+        setBranchOpen(true);
+      },
       push: runPush,
       pull: runPull,
     }),
@@ -123,6 +142,12 @@ export function GitUiProvider({ children }: { children: ReactNode }) {
       />
       <MoreSheet repoPath={more} open={moreOpen} onOpenChange={setMoreOpen} />
       <OutputSheet repoPath={output} open={outputOpen} onOpenChange={setOutputOpen} />
+      <BranchPicker
+        repoPath={branching}
+        open={branchOpen}
+        onOpenChange={setBranchOpen}
+        onPick={runSwitch}
+      />
       <DiscardDialog
         target={discarding}
         open={discardOpen}

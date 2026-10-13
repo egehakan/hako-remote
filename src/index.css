@@ -43,6 +43,7 @@
   --color-well: var(--well);
   --color-faint: var(--faint);
   --color-settled: var(--settled);
+  --color-remote: var(--remote);
 
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
@@ -114,6 +115,8 @@
   --accent-foreground: var(--foreground);
   --destructive: #f2695c;
   --settled: #8dbf9b;
+  /* What is on the remote and not here: the upstream's line in a graph, a branch to fetch. */
+  --remote: #8fb6e8;
   --ring: var(--lid);
 
   --radius: 0.5rem;

@@ -5,13 +5,13 @@ import {
   EllipsisIcon,
   FolderGit2Icon,
   GitBranchIcon,
-  GitMergeIcon,
   RefreshCwIcon,
   SearchIcon,
   XIcon,
 } from "lucide-react";
 import { memo, useDeferredValue, useMemo, useState } from "react";
 import { ActivityLine } from "@/components/git/activity-line";
+import { BranchControl } from "@/components/git/branch-control";
 import { useGitUi } from "@/components/git/git-ui";
 import { RepoActions } from "@/components/git/repo-actions";
 import { GitProblem, RepoListSkeleton } from "@/components/git/states";
@@ -27,7 +27,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { baseName } from "@/lib/files/paths";
-import { branchLabel, groupRepos, hasWork, isUnpublished, plural } from "@/lib/git/repos";
+import { groupRepos, hasWork, isUnpublished, plural } from "@/lib/git/repos";
 import { useActivity, useRepos } from "@/lib/git/store";
 import { useConnection, useWorkspace } from "@/lib/hooks";
 import { routes } from "@/lib/route";
@@ -215,11 +215,9 @@ const RepoRow = memo(function RepoRow({ repo, folder, quiet, selected }: RepoRow
   return (
     <li className={cn(selected && "bg-accent")}>
       <div className="flex items-stretch">
-        <a
-          href={routes.repo(repo.path)}
-          aria-current={selected ? "page" : undefined}
-          className="flex min-h-14 min-w-0 flex-1 items-start gap-3 py-2.5 pl-[max(1rem,env(safe-area-inset-left))] outline-none hover:bg-accent/50 focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset"
-        >
+        {/* The repository's name is the link, stretched over the row, so that the branch can be a
+            control of its own inside it. */}
+        <div className="relative flex min-h-14 min-w-0 flex-1 items-start gap-3 py-2.5 pl-[max(1rem,env(safe-area-inset-left))] hover:bg-accent/50 has-[a:focus-visible]:bg-accent">
           <span
             className={cn(
               "mt-0.5 flex size-6 shrink-0 items-center justify-center",
@@ -234,16 +232,18 @@ const RepoRow = memo(function RepoRow({ repo, folder, quiet, selected }: RepoRow
           </span>
           <span className="flex min-w-0 flex-1 flex-col gap-0.5">
             <span className="flex min-w-0 items-baseline gap-2">
-              <span
+              <a
+                href={routes.repo(repo.path)}
+                aria-current={selected ? "page" : undefined}
                 className={cn(
-                  "min-w-0 truncate text-[0.9375rem] leading-5 font-medium",
+                  "min-w-0 truncate text-[0.9375rem] leading-5 font-medium outline-none after:absolute after:inset-0 focus-visible:after:ring-2 focus-visible:after:ring-ring/60 focus-visible:after:ring-inset",
                   quiet && "font-normal text-muted-foreground",
                   selected && "text-lid",
                 )}
                 translate="no"
               >
                 {repo.name}
-              </span>
+              </a>
               {place ? (
                 <span className="min-w-12 shrink-[99] truncate text-[0.75rem] leading-5 text-faint">
                   {place}
@@ -256,14 +256,7 @@ const RepoRow = memo(function RepoRow({ repo, folder, quiet, selected }: RepoRow
                 quiet ? "text-faint" : "text-muted-foreground",
               )}
             >
-              <span className="flex min-w-0 items-center gap-1" translate="no">
-                {repo.operation !== null ? (
-                  <GitMergeIcon aria-hidden="true" className="size-3 shrink-0 text-destructive" />
-                ) : (
-                  <GitBranchIcon aria-hidden="true" className="size-3 shrink-0" />
-                )}
-                <span className="truncate">{branchLabel(repo)}</span>
-              </span>
+              <BranchControl repo={repo} />
               {repo.ahead > 0 ? (
                 <span className="shrink-0 text-foreground" aria-label={`${repo.ahead} to push`}>
                   ↑{repo.ahead}
@@ -284,7 +277,7 @@ const RepoRow = memo(function RepoRow({ repo, folder, quiet, selected }: RepoRow
             </span>
           </span>
           <ChevronRightIcon aria-hidden="true" className="mt-3 size-4 shrink-0 text-faint" />
-        </a>
+        </div>
         <Button
           variant="ghost"
           size="icon-touch"
