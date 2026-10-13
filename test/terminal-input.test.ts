@@ -56,6 +56,20 @@ test("output order: a frame beyond the expected offset is a gap, and stays one",
   assert.deepEqual(tracker.accept(121, 4), { kind: "apply", offset: 0 });
 });
 
+test("output order: an empty frame beyond the expected offset announces a gap", () => {
+  const tracker = new SeqTracker();
+  tracker.reset(100);
+  // Nothing to write, and nothing missing: the stream stands where it stood.
+  assert.deepEqual(tracker.accept(100, 0), { kind: "skip" });
+  assert.deepEqual(tracker.accept(100, 4), { kind: "apply", offset: 0 });
+  // Bytes were left out and no output follows: the empty frame alone says so.
+  assert.deepEqual(tracker.accept(160, 0), { kind: "gap" });
+  // The snapshot asked for because of it starts where the empty frame said.
+  tracker.reset(160);
+  assert.deepEqual(tracker.accept(160, 0), { kind: "skip" });
+  assert.deepEqual(tracker.accept(160, 2), { kind: "apply", offset: 0 });
+});
+
 test("output order: what the snapshot already covers is skipped", () => {
   const tracker = new SeqTracker();
   tracker.reset(100);

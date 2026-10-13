@@ -192,11 +192,24 @@ Mac does not know. `term.unsubscribe` answers `{}` whether or not the session st
 
 #### Subscribing and the stream
 
-- The session's output is one stream of bytes, exactly as the PTY produced them. `seq` numbers its
-  bytes: every output frame carries the offset of its first byte, frames are sent in order, and each
-  starts where the one before ended (`seq` of a frame = `seq` + payload length of the previous one).
-  The counter never goes back while the session lives. It may start anywhere, and it stays below
-  2^53, because the client holds it in a JavaScript number.
+- The session's output is one stream of bytes. `seq` numbers its bytes: every output frame carries
+  the offset of its first byte, frames are sent in order, and each starts where the one before ended
+  (`seq` of a frame = `seq` + payload length of the previous one). The counter never goes back while
+  the session lives, and it stays below 2^53, because the client holds it in a JavaScript number.
+  The desktop app starts every session at 0 and keeps counting across unsubscribes and across its
+  own reconnects to the relay: a new subscription does not reset it. A client must not rely on 0,
+  only on the `seq` of its snapshot.
+- The stream is what the Mac's terminal was fed, which is the PTY's output with two differences in
+  the desktop app: in its default prompt mode it puts `CR LF` after each shell prompt, so that the
+  prompt sits on a line of its own, and it withholds the setup script it sends to a new shell. The
+  bytes are still a valid terminal stream; they are just not a recording of the PTY.
+- A frame may be empty. When bytes were left out of the stream and no output follows that would
+  reveal it, the agent sends an output frame with a payload of length 0 that carries the new `seq`.
+  A client treats it as any other frame: beyond the offset it expects, it is a gap. The desktop app
+  does this after a `term.subscribe` that arrives while a new shell is still running its setup: the
+  snapshot is empty, and a gap follows it.
+- The desktop app flushes output every 12 ms while a terminal is busy, in frames of at most 64 KiB;
+  a keystroke comes back as its echo in about 10 ms on the Mac's side.
 - `term.subscribe` answers with the size the terminal has now (`cols`, `rows`), a `snapshot`, and
   the `seq` of the first byte the snapshot does not cover. Output frames with that `seq` and later
   follow. The agent sends the response before the first of those frames; the desktop app keeps
@@ -246,6 +259,9 @@ What the snapshot must achieve:
   terminal was in its reset state. The mock agent replays what it has, which is good enough to
   develop against; the desktop app is expected to serialise its emulator's state instead.
 - With base64 the snapshot must stay well under the 8 MB frame limit.
+- The desktop app's snapshot carries at most 2,000 rows of history. For a running program that is
+  not full-screen it starts at the top of the screen, with the history above it in scrollback. It
+  does not restore a saved cursor position, tab stops or the window title.
 
 The client never answers what a program asks the terminal (device attributes, cursor position
 reports, colour queries, focus events): the Mac's terminal answers those, and a second answer would
@@ -268,11 +284,18 @@ arrive as stray input. Neither the snapshot nor the stream needs to hide such re
   afterwards, which the client then uses. The last request wins.
 - `term.release_size` gives the size back to the Mac, which returns the terminal to the size its
   window gives it. `term.unsubscribe` does the same, and so does losing the relay connection, so a
-  phone that goes away does not leave the terminal at phone size.
+  phone that goes away does not leave the terminal at phone size. With several clients the size is
+  given back when the last subscriber leaves.
+- `term.resize` for a session nobody is subscribed to changes nothing and answers with the size the
+  terminal has.
 - Event `term.size` (`{ session_id, cols, rows }`) is sent to the session's subscribers whenever the
   size changes for any reason, including to the client that asked for the change and when the Mac's
   own window is resized. It is sent in order with the output: bytes sent before it were laid out
   for the old size, bytes after it for the new one.
+- The desktop app also resizes a terminal by itself when a program enters or leaves the alternate
+  screen (from 155 x 47 to 159 x 45, say), so a `term.size` arrives around every `vim` or `less`.
+  It is ordinary: the client applies it, and neither reports it nor asks for its own size again
+  because of it.
 - The client sends `term.resize` after subscribing while "fit to phone" is on, again when its own
   screen changes (rotation, the on-screen keyboard), and after a reconnect. It sends
   `term.release_size` when the switch is turned off and before the `term.unsubscribe` of leaving.
