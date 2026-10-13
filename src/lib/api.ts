@@ -43,7 +43,8 @@ async function call<T>(path: string, body?: unknown): Promise<ApiResult<T>> {
 
 export const api = {
   me: () => call<{ email: string }>("/api/me"),
-  login: (email: string, password: string) => call<{ email: string }>("/api/login", { email, password }),
+  login: (email: string, password: string) =>
+    call<{ email: string }>("/api/login", { email, password }),
   logout: () => call<{ ok: true }>("/api/logout", {}),
   changePassword: (current: string, next: string) =>
     call<{ ok: true }>("/api/password", { current, next }),

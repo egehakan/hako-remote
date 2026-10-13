@@ -228,7 +228,12 @@ export class Relay {
     const requestId = frame.id;
     if (typeof requestId !== "string" || requestId.length === 0) return;
     if (requestId.length > MAX_REQUEST_ID_LENGTH || typeof frame.method !== "string") {
-      this.fail(client, requestId.slice(0, MAX_REQUEST_ID_LENGTH), "bad_request", "Malformed request");
+      this.fail(
+        client,
+        requestId.slice(0, MAX_REQUEST_ID_LENGTH),
+        "bad_request",
+        "Malformed request",
+      );
       return;
     }
     const rewritten = rewriteRequestId(client.id, requestId);

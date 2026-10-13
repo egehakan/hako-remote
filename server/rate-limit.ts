@@ -3,7 +3,8 @@ import type { DatabaseSync } from "node:sqlite";
 export const MAX_FAILURES = 5;
 export const LOCKOUT_MS = 15 * 60 * 1000;
 
-export type LimitState = { locked: false; remaining: number } | { locked: true; retryAfterMs: number };
+export type LimitState =
+  { locked: false; remaining: number } | { locked: true; retryAfterMs: number };
 
 /**
  * Counts failed logins per key. Five failures inside 15 minutes lock the key until 15 minutes
@@ -34,7 +35,9 @@ export class LoginLimiter {
   }
 
   recordFailure(key: string): LimitState {
-    this.db.prepare("INSERT INTO login_attempts (key, failed_at) VALUES (?, ?)").run(key, this.now());
+    this.db
+      .prepare("INSERT INTO login_attempts (key, failed_at) VALUES (?, ?)")
+      .run(key, this.now());
     return this.check(key);
   }
 

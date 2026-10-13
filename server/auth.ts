@@ -37,7 +37,9 @@ export class UserStore {
   async ensure(email: string, initialPassword: string | null): Promise<boolean> {
     if (this.get()) return false;
     if (!initialPassword) {
-      throw new Error("The database has no user yet: set HAKO_INITIAL_PASSWORD for the first start");
+      throw new Error(
+        "The database has no user yet: set HAKO_INITIAL_PASSWORD for the first start",
+      );
     }
     const hash = await hashPassword(initialPassword);
     this.db
@@ -47,6 +49,8 @@ export class UserStore {
   }
 
   setPasswordHash(hash: string): void {
-    this.db.prepare("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = 1").run(hash, Date.now());
+    this.db
+      .prepare("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = 1")
+      .run(hash, Date.now());
   }
 }

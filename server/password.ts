@@ -13,8 +13,12 @@ export const MAX_PASSWORD_LENGTH = 256;
 
 function derive(password: string, salt: Buffer, n: number, r: number, p: number, length: number) {
   return new Promise<Buffer>((resolve, reject) => {
-    scrypt(password.normalize("NFKC"), salt, length, { N: n, r, p, maxmem: MAX_MEMORY }, (err, key) =>
-      err ? reject(err) : resolve(key),
+    scrypt(
+      password.normalize("NFKC"),
+      salt,
+      length,
+      { N: n, r, p, maxmem: MAX_MEMORY },
+      (err, key) => (err ? reject(err) : resolve(key)),
     );
   });
 }
@@ -33,7 +37,8 @@ export async function verifyPassword(password: string, stored: string): Promise<
   const [n, r, p] = parts.slice(1, 4).map(Number);
   const salt = Buffer.from(parts[4], "base64url");
   const expected = Buffer.from(parts[5], "base64url");
-  if (![n, r, p].every(Number.isSafeInteger) || salt.length === 0 || expected.length === 0) return false;
+  if (![n, r, p].every(Number.isSafeInteger) || salt.length === 0 || expected.length === 0)
+    return false;
   if (password.length > MAX_PASSWORD_LENGTH) return false;
   try {
     const actual = await derive(password, salt, n, r, p, expected.length);

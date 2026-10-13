@@ -11,12 +11,7 @@ export const CLOSE_REPLACED = 4001;
 export const CLOSE_SESSION_ENDED = 4401;
 
 export type ErrorCode =
-  | "agent_offline"
-  | "timeout"
-  | "bad_request"
-  | "not_found"
-  | "not_supported"
-  | "failed";
+  "agent_offline" | "timeout" | "bad_request" | "not_found" | "not_supported" | "failed";
 
 export type RpcError = { code: ErrorCode; message: string };
 
@@ -30,12 +25,7 @@ export type PingFrame = { t: "ping" };
 export type PongFrame = { t: "pong" };
 
 export type Frame =
-  | RequestFrame
-  | ResponseFrame
-  | NotificationFrame
-  | EventFrame
-  | PingFrame
-  | PongFrame;
+  RequestFrame | ResponseFrame | NotificationFrame | EventFrame | PingFrame | PongFrame;
 
 export type AgentStatus = {
   online: boolean;

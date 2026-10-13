@@ -1,0 +1,6 @@
+dist
+pnpm-lock.yaml
+public
+brand
+src/components/ui
+docs

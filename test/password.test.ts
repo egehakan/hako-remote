@@ -11,7 +11,10 @@ test("a password verifies against its own hash and nothing else", async () => {
 });
 
 test("each hash gets its own salt", async () => {
-  const [first, second] = await Promise.all([hashPassword("same password"), hashPassword("same password")]);
+  const [first, second] = await Promise.all([
+    hashPassword("same password"),
+    hashPassword("same password"),
+  ]);
   assert.notEqual(first, second);
   assert.equal(await verifyPassword("same password", second), true);
 });

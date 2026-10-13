@@ -11,10 +11,16 @@ function limiterAt(start: number) {
 test("the fifth failure locks the key for 15 minutes", () => {
   const { clock, limiter } = limiterAt(10_000_000);
   for (let attempt = 1; attempt <= 4; attempt++) {
-    assert.deepEqual(limiter.recordFailure("me@example.com"), { locked: false, remaining: 5 - attempt });
+    assert.deepEqual(limiter.recordFailure("me@example.com"), {
+      locked: false,
+      remaining: 5 - attempt,
+    });
     clock.now += 1000;
   }
-  assert.deepEqual(limiter.recordFailure("me@example.com"), { locked: true, retryAfterMs: LOCKOUT_MS });
+  assert.deepEqual(limiter.recordFailure("me@example.com"), {
+    locked: true,
+    retryAfterMs: LOCKOUT_MS,
+  });
 
   clock.now += LOCKOUT_MS - 1;
   assert.deepEqual(limiter.check("me@example.com"), { locked: true, retryAfterMs: 1 });

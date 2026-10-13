@@ -79,7 +79,10 @@ export function tabAgent(tab: Tab): Pane["agent"] {
   let best: Pane["agent"] = null;
   for (const pane of tab.panes) {
     if (!pane.agent) continue;
-    if (!best || ATTENTION_ORDER.indexOf(pane.agent.status) < ATTENTION_ORDER.indexOf(best.status)) {
+    if (
+      !best ||
+      ATTENTION_ORDER.indexOf(pane.agent.status) < ATTENTION_ORDER.indexOf(best.status)
+    ) {
       best = pane.agent;
     }
   }

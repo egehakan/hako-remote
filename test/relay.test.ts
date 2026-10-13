@@ -18,7 +18,9 @@ class FakeSocket implements RelaySocket {
   }
 
   get json(): Sent[] {
-    return this.frames.filter((frame) => typeof frame === "string").map((frame) => JSON.parse(frame));
+    return this.frames
+      .filter((frame) => typeof frame === "string")
+      .map((frame) => JSON.parse(frame));
   }
 
   get binary(): Uint8Array[] {
@@ -38,7 +40,12 @@ function setup(options = {}) {
   const info = agent.last();
   relay.handleAgentMessage(
     agent,
-    JSON.stringify({ t: "res", id: info.id, ok: true, result: { name: "Studio", version: "1.2", hostname: "studio.local" } }),
+    JSON.stringify({
+      t: "res",
+      id: info.id,
+      ok: true,
+      result: { name: "Studio", version: "1.2", hostname: "studio.local" },
+    }),
   );
   const connect = () => {
     const socket = new FakeSocket();
@@ -60,7 +67,11 @@ test("a new client is told the agent's status", () => {
   const { connect } = setup();
   const { socket } = connect();
   assert.deepEqual(socket.json, [
-    { t: "evt", event: "agent.status", data: { online: true, name: "Studio", version: "1.2", hostname: "studio.local" } },
+    {
+      t: "evt",
+      event: "agent.status",
+      data: { online: true, name: "Studio", version: "1.2", hostname: "studio.local" },
+    },
   ]);
 });
 
@@ -96,7 +107,10 @@ test("an answer nobody is waiting for is dropped, including one aimed at another
   const { relay, agent, connect } = setup();
   const a = connect();
   const before = a.socket.json.length;
-  relay.handleAgentMessage(agent, JSON.stringify({ t: "res", id: `${a.id}:99`, ok: true, result: {} }));
+  relay.handleAgentMessage(
+    agent,
+    JSON.stringify({ t: "res", id: `${a.id}:99`, ok: true, result: {} }),
+  );
   relay.handleAgentMessage(agent, JSON.stringify({ t: "res", id: "99", ok: true, result: {} }));
   assert.equal(a.socket.json.length, before);
 });
@@ -158,7 +172,10 @@ test("a new agent replaces the old one, which is closed with 4001", () => {
   assert.deepEqual(a.socket.last().data, { online: false });
 
   // A late frame from the replaced agent is ignored.
-  relay.handleAgentMessage(agent, JSON.stringify({ t: "evt", event: "workspace.changed", data: {} }));
+  relay.handleAgentMessage(
+    agent,
+    JSON.stringify({ t: "evt", event: "workspace.changed", data: {} }),
+  );
   assert.deepEqual(a.socket.last().data, { online: false });
   relay.detachAgent(agent);
 
@@ -181,12 +198,22 @@ test("general events go to every client; notifications go to the agent", () => {
   const { relay, agent, connect } = setup();
   const a = connect();
   const b = connect();
-  relay.handleAgentMessage(agent, JSON.stringify({ t: "evt", event: "workspace.changed", data: {} }));
+  relay.handleAgentMessage(
+    agent,
+    JSON.stringify({ t: "evt", event: "workspace.changed", data: {} }),
+  );
   assert.equal(a.socket.last().event, "workspace.changed");
   assert.equal(b.socket.last().event, "workspace.changed");
 
-  relay.handleClientMessage(a.id, JSON.stringify({ t: "ntf", method: "term.input", params: { session_id: "s1", data: "ls\r" } }));
-  assert.deepEqual(agent.last(), { t: "ntf", method: "term.input", params: { session_id: "s1", data: "ls\r" } });
+  relay.handleClientMessage(
+    a.id,
+    JSON.stringify({ t: "ntf", method: "term.input", params: { session_id: "s1", data: "ls\r" } }),
+  );
+  assert.deepEqual(agent.last(), {
+    t: "ntf",
+    method: "term.input",
+    params: { session_id: "s1", data: "ls\r" },
+  });
 });
 
 test("terminal output and terminal events reach only the clients subscribed to that session", () => {
@@ -209,7 +236,14 @@ test("terminal output and terminal events reach only the clients subscribed to t
   assert.equal(b.socket.binary.length, 2);
   assert.equal(c.socket.binary.length, 0);
 
-  relay.handleAgentMessage(agent, JSON.stringify({ t: "evt", event: "term.size", data: { session_id: "s2", cols: 40, rows: 20 } }));
+  relay.handleAgentMessage(
+    agent,
+    JSON.stringify({
+      t: "evt",
+      event: "term.size",
+      data: { session_id: "s2", cols: 40, rows: 20 },
+    }),
+  );
   assert.equal(b.socket.last().event, "term.size");
   assert.notEqual(a.socket.last().event, "term.size");
   assert.notEqual(c.socket.last().event, "term.size");

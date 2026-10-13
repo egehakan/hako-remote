@@ -140,7 +140,10 @@ class RelayConnection {
       this.set({ link: "retrying", agent: null });
       // A refused upgrade looks like any other failed connection, so ask whether we are logged in.
       if (!opened) void this.checkSession();
-      this.retryTimer = window.setTimeout(() => this.open(), this.retryMs * (0.75 + Math.random() / 2));
+      this.retryTimer = window.setTimeout(
+        () => this.open(),
+        this.retryMs * (0.75 + Math.random() / 2),
+      );
       this.retryMs = Math.min(this.retryMs * 2, RETRY_MAX_MS);
     };
   }

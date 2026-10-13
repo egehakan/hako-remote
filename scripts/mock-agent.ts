@@ -124,7 +124,12 @@ function newId(prefix: string): string {
   return `${prefix}-${(nextId++).toString(36).padStart(4, "0")}`;
 }
 
-function terminalPane(title: string, cwd: string, agent: Pane["agent"] = null, focused = true): Pane {
+function terminalPane(
+  title: string,
+  cwd: string,
+  agent: Pane["agent"] = null,
+  focused = true,
+): Pane {
   const sessionId = newId("sess");
   terminals.set(sessionId, new FakeTerminal(sessionId, cwd));
   return { id: newId("pane"), kind: "terminal", title, focused, session_id: sessionId, cwd, agent };
@@ -278,8 +283,22 @@ const THEME: TerminalTheme = {
     cursor: "#F6C984",
     selection: "#3A3226",
     ansi: [
-      "#1B1E26", "#E0685A", "#8DBF9B", "#E8B45E", "#6C9BD1", "#B48EAD", "#6FB5B5", "#C9C5BB",
-      "#565B69", "#F08A7D", "#A9D5B5", "#F6C984", "#8FB7E3", "#CBA6C6", "#8FCFCF", "#F2EEE6",
+      "#1B1E26",
+      "#E0685A",
+      "#8DBF9B",
+      "#E8B45E",
+      "#6C9BD1",
+      "#B48EAD",
+      "#6FB5B5",
+      "#C9C5BB",
+      "#565B69",
+      "#F08A7D",
+      "#A9D5B5",
+      "#F6C984",
+      "#8FB7E3",
+      "#CBA6C6",
+      "#8FCFCF",
+      "#F2EEE6",
     ],
   },
   font_family: "Hack",

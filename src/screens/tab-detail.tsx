@@ -4,7 +4,13 @@ import { AgentBadge } from "@/components/agent-badge";
 import { DetailHeader } from "@/components/detail-header";
 import { FolderIcon } from "@/components/folder-icon";
 import { Button } from "@/components/ui/button";
-import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
+} from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useWorkspaceActions } from "@/components/workspace-actions";
 import { useWorkspace } from "@/lib/hooks";
@@ -60,7 +66,10 @@ export function TabDetail({ tabId }: { tabId: string }) {
             <FolderIcon folder={folder} />
             <div className="min-w-0">
               <p className="truncate text-sm leading-5 font-medium">{folder.name}</p>
-              <p className="truncate font-mono text-xs leading-5 text-muted-foreground" translate="no">
+              <p
+                className="truncate font-mono text-xs leading-5 text-muted-foreground"
+                translate="no"
+              >
                 {tildify(folder.directory)}
               </p>
             </div>
@@ -110,7 +119,11 @@ const KIND_LABELS: Record<Pane["kind"], string> = {
 
 function PaneDetails({ pane, showFocus }: { pane: Pane; showFocus: boolean }) {
   const Icon =
-    pane.kind === "terminal" ? SquareTerminalIcon : pane.kind === "file" ? FileTextIcon : SquareIcon;
+    pane.kind === "terminal"
+      ? SquareTerminalIcon
+      : pane.kind === "file"
+        ? FileTextIcon
+        : SquareIcon;
   return (
     <li className="flex gap-3 py-3.5">
       <Icon aria-hidden="true" className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
@@ -120,7 +133,9 @@ function PaneDetails({ pane, showFocus }: { pane: Pane; showFocus: boolean }) {
           <span className="min-w-0 font-mono text-sm leading-6 break-words" translate="no">
             {pane.title}
           </span>
-          {showFocus && pane.focused ? <span className="text-xs text-muted-foreground">focused</span> : null}
+          {showFocus && pane.focused ? (
+            <span className="text-xs text-muted-foreground">focused</span>
+          ) : null}
           {pane.agent ? <AgentBadge agent={pane.agent} /> : null}
         </div>
         {pane.cwd ? (

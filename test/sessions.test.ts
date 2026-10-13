@@ -29,7 +29,10 @@ test("the database stores a hash, not the session id", () => {
   const id = unsignSessionId(cookie, SECRET);
   assert.ok(id);
   const rows = db.prepare("SELECT id_hash FROM sessions").all();
-  assert.deepEqual(rows.map((row) => row.id_hash), [hashSessionId(id)]);
+  assert.deepEqual(
+    rows.map((row) => row.id_hash),
+    [hashSessionId(id)],
+  );
   assert.notEqual(idHash, id);
   assert.equal(store.resolve(cookie), idHash);
 });

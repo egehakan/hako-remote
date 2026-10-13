@@ -16,7 +16,9 @@ function required(env: NodeJS.ProcessEnv, name: string, minLength = 1): string {
   const value = env[name]?.trim() ?? "";
   if (value.length < minLength) {
     throw new Error(
-      minLength > 1 ? `${name} must be set to at least ${minLength} characters` : `${name} must be set`,
+      minLength > 1
+        ? `${name} must be set to at least ${minLength} characters`
+        : `${name} must be set`,
     );
   }
   return value;
