@@ -2,9 +2,10 @@
 // and each repository's changed files are kept so that going back shows them at once while fresh
 // ones are fetched.
 
-import { GIT_REPOS_TIMEOUT_MS, GIT_WRITE_TIMEOUT_MS } from "@shared/git";
+import { GIT_REPOS_TIMEOUT_MS, GIT_SWITCH_TIMEOUT_MS, GIT_WRITE_TIMEOUT_MS } from "@shared/git";
 import type {
   ErrorCode,
+  GitBranchesResult,
   GitChangedEvent,
   GitCommitResult,
   GitDiscardResult,
@@ -13,7 +14,10 @@ import type {
   GitPushResult,
   GitRepo,
   GitReposResult,
+  GitShowResult,
   GitStatusResult,
+  GitSwitchKind,
+  GitSwitchResult,
 } from "@shared/protocol";
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { relay, RpcFailure } from "@/lib/connection";
@@ -27,7 +31,7 @@ export type Loadable<T> = {
   loading: boolean;
 };
 
-export type ActionKind = "commit" | "push" | "pull" | "discard";
+export type ActionKind = "commit" | "push" | "pull" | "discard" | "switch";
 
 /** The last thing done to a repository from here, for as long as it is worth showing. */
 export type Activity = {
@@ -43,7 +47,11 @@ export type Activity = {
 
 const IDLE: Loadable<never> = { data: null, error: null, loading: false };
 const REPOS = "repos";
-const statusKey = (repo: string) => `status:${repo}`;
+// Every other key names what is asked, then the repository, then anything more, a line each.
+const statusKey = (repo: string) => `status\n${repo}`;
+const branchesKey = (repo: string) => `branches\n${repo}`;
+const showKey = (repo: string, commit: string) => `show\n${repo}\n${commit}`;
+const repoOfKey = (key: string) => key.split("\n")[1];
 
 const cache = new Map<string, Loadable<unknown>>();
 const inFlight = new Map<string, Promise<void>>();
@@ -52,6 +60,8 @@ const shown = new Map<string, number>();
 const activities = new Map<string, Activity>();
 /** Goes up whenever a repository's files may have changed, so an open diff knows to look again. */
 const epochs = new Map<string, number>();
+/** Goes up when any repository may have changed. */
+let everyEpoch = 0;
 const listeners = new Set<() => void>();
 
 function emit(): void {
@@ -78,18 +88,30 @@ function load(key: string): Promise<void> {
   if (running) return running;
   const before = cache.get(key) ?? IDLE;
   put(key, { ...before, loading: true });
-  const request =
+  const [what, repo, commit] = key.split("\n");
+  const request: Promise<unknown> =
     key === REPOS
       ? relay.request<GitReposResult>("git.repos", {}, GIT_REPOS_TIMEOUT_MS)
-      : relay.request<GitStatusResult>("git.status", { repo: key.slice(7) });
+      : what === "status"
+        ? relay.request<GitStatusResult>("git.status", { repo })
+        : what === "branches"
+          ? relay.request<GitBranchesResult>("git.branches", { repo })
+          : relay.request<GitShowResult>("git.show", { repo, commit });
   const done = request
     .then(
       (data) => {
         put(key, { data, error: null, loading: false });
-        if (key !== REPOS) putRepo((data as GitStatusResult).repo);
+        if (what === "status") putRepo((data as GitStatusResult).repo);
+        if (what === "branches" || what === "show") noteHistorySupport(true);
       },
       // What is already on screen stays there under the error, which says it may be out of date.
-      (error) => put(key, { data: before.data, error: toGitError(error), loading: false }),
+      (failure) => {
+        const error = toGitError(failure);
+        if (error.code === "not_supported" && (what === "branches" || what === "show")) {
+          noteHistorySupport(false);
+        }
+        put(key, { data: before.data, error, loading: false });
+      },
     )
     .finally(() => inFlight.delete(key));
   inFlight.set(key, done);
@@ -158,21 +180,102 @@ export function useActivity(repo: string | null): Activity | null {
   );
 }
 
+/** A repository's branches, for as long as something shows them. */
+export function useBranches(
+  repo: string | null,
+): Loadable<GitBranchesResult> & { reload: () => void } {
+  return useResource<GitBranchesResult>(repo === null ? null : branchesKey(repo));
+}
+
+/** One commit: its message and the files it changed. */
+export function useCommit(
+  repo: string | null,
+  commit: string | null,
+): Loadable<GitShowResult> & { reload: () => void } {
+  return useResource<GitShowResult>(
+    repo === null || commit === null ? null : showKey(repo, commit),
+  );
+}
+
 export function useEpoch(repo: string): number {
-  return useSyncExternalStore(subscribe, () => epochs.get(repo) ?? 0);
+  return useSyncExternalStore(subscribe, () => (epochs.get(repo) ?? 0) + everyEpoch);
 }
 
 /** Looks again at everything on screen, and forgets what is not, so that it is fetched when opened. */
 function refresh(repo: string | null): void {
   for (const key of [...cache.keys()]) {
-    if (key !== REPOS && repo !== null && key !== statusKey(repo)) continue;
+    if (key !== REPOS && repo !== null && repoOfKey(key) !== repo) continue;
     if (shown.has(key)) void load(key);
     else if (key !== REPOS) cache.delete(key);
   }
-  if (repo === null) for (const path of epochs.keys()) epochs.set(path, epochs.get(path)! + 1);
+  if (repo === null) everyEpoch += 1;
   else epochs.set(repo, (epochs.get(repo) ?? 0) + 1);
   emit();
 }
+
+/** Reads one repository again because the owner asked: its files, its branches and its graph. */
+export function refreshRepo(repo: string): void {
+  refresh(repo);
+}
+
+// Branches, switching and the graph came after the rest, so a Hako on the Mac may lack them while
+// it has everything else. Whichever of their methods answers first says which it is.
+
+export type HistorySupport = "unknown" | "yes" | "no";
+
+let historySupport: HistorySupport = "unknown";
+let probingHistory = false;
+
+export function noteHistorySupport(supported: boolean): void {
+  const next = supported ? "yes" : "no";
+  if (historySupport === next) return;
+  historySupport = next;
+  emit();
+}
+
+function probeHistorySupport(): void {
+  if (probingHistory || historySupport !== "unknown") return;
+  probingHistory = true;
+  relay
+    // Not a path, so a Hako that has the method refuses it without looking at any repository.
+    .request("git.branches", { repo: "?" })
+    .then(
+      () => noteHistorySupport(true),
+      (failure) => {
+        const { code } = toGitError(failure);
+        // A Mac that did not get to answer has said nothing about its age: asked again later.
+        if (code === "agent_offline" || code === "timeout" || code === "disconnected") return;
+        noteHistorySupport(code !== "not_supported");
+      },
+    )
+    .finally(() => {
+      probingHistory = false;
+    });
+}
+
+/** Whether the Hako on the Mac can list branches, switch them and show history. Asks, once. */
+export function useHistorySupport(): HistorySupport {
+  const { link, agent } = useConnection();
+  const online = link === "open" && agent?.online === true;
+  const support = useSyncExternalStore(subscribe, () => historySupport);
+  useEffect(() => {
+    if (online) probeHistorySupport();
+  }, [online, support]);
+  return support;
+}
+
+// Another Hako may be on the other end after the Mac has been away.
+let agentWasUp = false;
+relay.subscribe(() => {
+  const { link, agent } = relay.getSnapshot();
+  const up = link === "open" && agent?.online === true;
+  if (up === agentWasUp) return;
+  agentWasUp = up;
+  if (!up && historySupport !== "unknown") {
+    historySupport = "unknown";
+    emit();
+  }
+});
 
 // The Mac may say when a repository changed. Several changes in a row are one look.
 let changedTimer: number | undefined;
@@ -185,6 +288,7 @@ relay.on("git.changed", (data) => {
   changedTimer = window.setTimeout(() => {
     const repos = changedRepos;
     changedRepos = new Set();
+    for (const path of repos ?? lingering.keys()) settleLingering(path);
     if (repos === null) refresh(null);
     else for (const path of repos) if (activities.get(path)?.state !== "running") refresh(path);
   }, 400);
@@ -201,11 +305,55 @@ document.addEventListener("visibilitychange", () => {
   if (link === "open" && agent?.online === true) refresh(null);
 });
 
+// A switch of branch that the relay stopped waiting for is still going on: the Mac gives git four
+// minutes, the relay one. Its line stays until the Mac says the repository changed, or until the
+// Mac's own limit has passed, and then the repository is read again.
+const lingering = new Map<string, number>();
+const LINGER_MS = 200_000;
+
+function linger(repo: string, at: number, name: string): void {
+  window.clearTimeout(lingering.get(repo));
+  lingering.set(
+    repo,
+    window.setTimeout(() => {
+      settleLingering(repo);
+      refresh(repo);
+    }, LINGER_MS),
+  );
+  setActivity(repo, {
+    kind: "switch",
+    state: "running",
+    summary: `Still switching to ${name} on your Mac…`,
+    output: "",
+    code: null,
+    at,
+  });
+}
+
+function settleLingering(repo: string): void {
+  const timer = lingering.get(repo);
+  if (timer === undefined) return;
+  window.clearTimeout(timer);
+  lingering.delete(repo);
+  if (activities.get(repo)?.kind === "switch") setActivity(repo, null);
+}
+
+const clearers = new Set<() => void>();
+
+/** Registers what else has to be forgotten when the owner signs out. */
+export function onGitCleared(clear: () => void): void {
+  clearers.add(clear);
+}
+
 export function clearGit(): void {
   cache.clear();
+  for (const timer of lingering.values()) window.clearTimeout(timer);
+  lingering.clear();
   activities.clear();
   epochs.clear();
   drafts.clear();
+  historySupport = "unknown";
+  for (const clear of clearers) clear();
   emit();
 }
 
@@ -224,7 +372,13 @@ export function dismissActivity(repo: string): void {
 }
 
 function failureSummary(kind: ActionKind, error: GitError): string {
-  const what = { commit: "Commit", push: "Push", pull: "Pull", discard: "Discard" }[kind];
+  const what = {
+    commit: "Commit",
+    push: "Push",
+    pull: "Pull",
+    discard: "Discard",
+    switch: "Switch",
+  }[kind];
   switch (error.code) {
     case "timeout":
       return `${what}: your Mac hasn’t answered yet`;
@@ -238,7 +392,10 @@ function failureSummary(kind: ActionKind, error: GitError): string {
   }
 }
 
-export type Outcome<T> = { ok: true; result: T } | { ok: false; error: GitError };
+export type Outcome<T> =
+  | { ok: true; result: T }
+  /** `pending` is true when no answer came but the command is still running on the Mac. */
+  | { ok: false; error: GitError; pending?: boolean };
 
 async function act<T extends { repo: GitRepo }>(
   repo: string,
@@ -337,6 +494,66 @@ export function discard(repo: string, file: GitFile | null): Promise<Outcome<Git
   );
 }
 
+/** What a switch is asked for: a branch there is, or the name of one to make at the current commit. */
+export type SwitchTarget = { branch: string; kind: GitSwitchKind };
+
+/** The name the branch has once it is checked out: a remote branch loses its remote. */
+function switchedName({ branch, kind }: SwitchTarget): string {
+  return kind === "remote" ? branch.slice(branch.indexOf("/") + 1) : branch;
+}
+
+export async function switchBranch(
+  repo: GitRepo,
+  target: SwitchTarget,
+): Promise<Outcome<GitSwitchResult & { repo: GitRepo }>> {
+  const name = switchedName(target);
+  const outcome = await runSwitch(repo, target, name);
+  if (!outcome.ok && outcome.error.code === "timeout") {
+    linger(repo.path, Date.now(), name);
+    return { ok: false, error: outcome.error, pending: true };
+  }
+  return outcome;
+}
+
+function runSwitch(
+  repo: GitRepo,
+  target: SwitchTarget,
+  name: string,
+): Promise<Outcome<GitSwitchResult & { repo: GitRepo }>> {
+  return act(
+    repo.path,
+    "switch",
+    target.kind === "new" ? `Creating ${name}…` : `Switching to ${name}…`,
+    async () => {
+      const result = await relay.request<GitSwitchResult>(
+        "git.switch",
+        { repo: repo.path, branch: target.branch, kind: target.kind },
+        GIT_SWITCH_TIMEOUT_MS,
+      );
+      // The switch says where HEAD is now; what the branch tracks comes with the files.
+      const moved: GitRepo = {
+        ...repo,
+        branch: result.current,
+        head: result.head,
+        upstream: null,
+        ahead: 0,
+        behind: 0,
+      };
+      const status = await relay
+        .request<GitStatusResult>("git.status", { repo: repo.path })
+        .catch(() => null);
+      return { ...result, repo: status?.repo ?? moved };
+    },
+    (result) => ({
+      summary:
+        target.kind === "new"
+          ? `Created ${result.current ?? name} and switched to it`
+          : `Switched to ${result.current ?? name}`,
+      output: "",
+    }),
+  );
+}
+
 // A commit message survives closing the sheet, a failed commit and a look at a diff.
 const drafts = new Map<string, string>();
 
@@ -355,6 +572,9 @@ export type GitPrefs = {
   wrap: boolean | null;
   /** Whether a commit is pushed straight away, as last chosen. */
   pushAfterCommit: boolean;
+  /** Whether a repository's changed files and its graph are unfolded. */
+  changesOpen: boolean;
+  graphOpen: boolean;
 };
 
 const STORAGE_KEY = "hako.git.v1";
@@ -365,9 +585,11 @@ function readPrefs(): GitPrefs {
     return {
       wrap: typeof stored.wrap === "boolean" ? stored.wrap : null,
       pushAfterCommit: stored.pushAfterCommit === true,
+      changesOpen: stored.changesOpen !== false,
+      graphOpen: stored.graphOpen !== false,
     };
   } catch {
-    return { wrap: null, pushAfterCommit: false };
+    return { wrap: null, pushAfterCommit: false, changesOpen: true, graphOpen: true };
   }
 }
 

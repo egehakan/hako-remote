@@ -119,7 +119,7 @@ export type Explained = { title: string; hint: string | null };
  * itself is always shown, and nothing is decided from this.
  */
 export function explainFailure(
-  kind: "commit" | "push" | "pull" | "discard",
+  kind: "commit" | "push" | "pull" | "discard" | "switch",
   code: string | null,
   output: string,
 ): Explained {
@@ -208,6 +208,33 @@ export function explainFailure(
       };
     }
     return { title: "Pull failed", hint: null };
+  }
+  if (kind === "switch") {
+    if (/would be overwritten|commit your changes or stash them/i.test(output)) {
+      return {
+        title: "Your changes are in the way",
+        hint: "Nothing was changed. The other branch has its own version of files you have changed here: commit or discard your changes first, then switch.",
+      };
+    }
+    if (/already (used by worktree|checked out) at/i.test(output)) {
+      return {
+        title: "That branch is open in another worktree",
+        hint: "Nothing was changed. A branch can be checked out in one working tree at a time; open that worktree instead.",
+      };
+    }
+    if (/already exists/i.test(output)) {
+      return {
+        title: "That name is taken",
+        hint: "Nothing was changed. There is a branch of that name already; switch to it, or pick another name.",
+      };
+    }
+    if (code === "bad_request" || /not a valid branch name|invalid reference/i.test(output)) {
+      return {
+        title: "That isn’t a branch git knows",
+        hint: "Nothing was changed. The branch may have been renamed or deleted on your Mac.",
+      };
+    }
+    return { title: "Couldn’t switch branches", hint: null };
   }
   if (kind === "commit") {
     if (/nothing to commit/i.test(output)) return { title: "Nothing to commit", hint: null };

@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { isValidRepoPath } from "../../shared/git.ts";
+import { isCommitId, isValidRepoPath } from "../../shared/git.ts";
 import { decodePath, encodePath } from "./files/paths";
 
 export type Route =
@@ -17,6 +17,10 @@ export type Route =
   | { name: "repo"; repo: string }
   /** One changed file's diff. `file` is relative to the repository. */
   | { name: "diff"; repo: string; file: string }
+  /** One commit of a repository: its message and the files it changed. */
+  | { name: "commit"; repo: string; commit: string }
+  /** One file's diff in one commit. */
+  | { name: "commitFile"; repo: string; commit: string; file: string }
   | { name: "account" };
 
 export type Area = "terminals" | "files" | "git" | "account";
@@ -34,6 +38,8 @@ export function areaOf(route: Route): Area {
     case "git":
     case "repo":
     case "diff":
+    case "commit":
+    case "commitFile":
       return "git";
     case "account":
       return "account";
@@ -58,18 +64,31 @@ export function parseRoute(hash: string): Route {
   return { name: "workspace" };
 }
 
-/** `<repository path>` or `<repository path>?f=<file>`, both escaped. */
+/**
+ * `<repository path>`, with `?f=<file>` for a changed file, `?c=<commit>` for a commit, or
+ * `?c=<commit>&f=<file>` for a file in a commit, each of them escaped.
+ */
 function parseRepoRoute(rest: string): Route {
-  const mark = rest.indexOf("?f=");
+  const mark = rest.indexOf("?");
   const repo = decodePath(mark === -1 ? rest : rest.slice(0, mark));
   if (repo === null) return { name: "git" };
   if (mark === -1) return { name: "repo", repo };
+  let commit: string | null = null;
+  let file: string | null = null;
   try {
-    const file = decodeURIComponent(rest.slice(mark + 3));
-    return isValidRepoPath(file) ? { name: "diff", repo, file } : { name: "repo", repo };
+    for (const part of rest.slice(mark + 1).split("&")) {
+      if (part.startsWith("c=")) commit = decodeURIComponent(part.slice(2));
+      else if (part.startsWith("f=")) file = decodeURIComponent(part.slice(2));
+    }
   } catch {
     return { name: "repo", repo };
   }
+  if (file !== null && !isValidRepoPath(file)) return { name: "repo", repo };
+  if (commit === null) return file === null ? { name: "repo", repo } : { name: "diff", repo, file };
+  if (!isCommitId(commit)) return { name: "repo", repo };
+  return file === null
+    ? { name: "commit", repo, commit }
+    : { name: "commitFile", repo, commit, file };
 }
 
 type Blocker = {
@@ -119,6 +138,9 @@ export const routes = {
   git: "#/git",
   repo: (repo: string) => `#/git/r${encodePath(repo)}`,
   diff: (repo: string, file: string) => `#/git/r${encodePath(repo)}?f=${encodeURIComponent(file)}`,
+  commit: (repo: string, commit: string) => `#/git/r${encodePath(repo)}?c=${commit}`,
+  commitFile: (repo: string, commit: string, file: string) =>
+    `#/git/r${encodePath(repo)}?c=${commit}&f=${encodeURIComponent(file)}`,
   files: "#/files",
   tab: (tabId: string) => `#/tab/${encodeURIComponent(tabId)}`,
   terminal: (sessionId: string) => `#/t/${encodeURIComponent(sessionId)}`,
