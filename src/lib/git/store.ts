@@ -277,10 +277,6 @@ async function act<T extends { repo: GitRepo }>(
   return outcome;
 }
 
-export function isBusy(repo: string): boolean {
-  return activities.get(repo)?.state === "running";
-}
-
 export function commit(repo: string, message: string): Promise<Outcome<GitCommitResult>> {
   return act(
     repo,

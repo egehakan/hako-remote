@@ -23,9 +23,11 @@ export function OutputSheet({ repoPath, open, onOpenChange }: OutputSheetProps) 
   const repo = useRepo(repoPath);
   const live = useActivity(repoPath);
   // A finished command's line disappears from the row after a while; the sheet keeps what it shows.
-  const [kept, setKept] = useState<Activity | null>(null);
-  if (live !== null && live !== kept && live.state !== "running") setKept(live);
-  const activity = live ?? kept;
+  const [kept, setKept] = useState<{ repo: string; activity: Activity } | null>(null);
+  if (repoPath !== null && live !== null && live.state !== "running" && live !== kept?.activity) {
+    setKept({ repo: repoPath, activity: live });
+  }
+  const activity = live ?? (kept?.repo === repoPath ? kept.activity : null);
   const [copied, setCopied] = useState(false);
 
   const failed = activity?.state === "failed";

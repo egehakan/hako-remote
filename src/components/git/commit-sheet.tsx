@@ -53,7 +53,7 @@ export function CommitSheet({ repoPath, open, onOpenChange, onCommitted }: Commi
           "top-[calc(var(--vv-pinned-top)+var(--vv-height))] [transform:translateY(-100%)] data-[side=bottom]:bottom-auto",
         )}
       >
-        {repo !== null && open ? (
+        {repo !== null ? (
           <CommitForm
             // A different repository is a different message.
             key={repo.path}
