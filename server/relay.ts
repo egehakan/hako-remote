@@ -5,6 +5,8 @@ import {
   CLOSE_SESSION_ENDED,
   type ErrorCode,
   type EventFrame,
+  REQUEST_TIMEOUT_MAX_MS,
+  REQUEST_TIMEOUT_MIN_MS,
   REQUEST_TIMEOUT_MS,
   type ResponseFrame,
 } from "../shared/protocol.ts";
@@ -76,6 +78,15 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value.slice(0, 200) : undefined;
 }
 
+/**
+ * How long one request waits for its answer: what the client asked for, kept within the limits, or
+ * the default when it asked for nothing a relay can use.
+ */
+export function requestTimeout(asked: unknown, fallback: number): number {
+  if (typeof asked !== "number" || !Number.isFinite(asked)) return fallback;
+  return Math.min(Math.max(Math.floor(asked), REQUEST_TIMEOUT_MIN_MS), REQUEST_TIMEOUT_MAX_MS);
+}
+
 /** Rewrites a client's request id so ids from different connections cannot collide at the agent. */
 export function rewriteRequestId(connectionId: string, clientRequestId: string): string {
   return `${connectionId}:${clientRequestId}`;
@@ -84,6 +95,7 @@ export function rewriteRequestId(connectionId: string, clientRequestId: string):
 /**
  * Passes frames between the one agent and any number of clients. Apart from the terminal
  * subscription methods it has to track, it forwards method names and payloads without reading them.
+ * How long it waits for an answer is the client's to say, request by request, never the method's.
  */
 export class Relay {
   private readonly requestTimeoutMs: number;
@@ -260,11 +272,14 @@ export class Relay {
       }
     }
 
-    const timer = setTimeout(() => {
-      this.pending.delete(rewritten);
-      client.pending.delete(rewritten);
-      this.fail(client, requestId, "timeout", "The Mac did not answer in time");
-    }, this.requestTimeoutMs);
+    const timer = setTimeout(
+      () => {
+        this.pending.delete(rewritten);
+        client.pending.delete(rewritten);
+        this.fail(client, requestId, "timeout", "The Mac did not answer in time");
+      },
+      requestTimeout(frame.timeout_ms, this.requestTimeoutMs),
+    );
     timer.unref();
     this.pending.set(rewritten, { client, clientRequestId: requestId, timer, subscribeTo });
     client.pending.add(rewritten);

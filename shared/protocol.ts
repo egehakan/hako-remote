@@ -5,6 +5,9 @@ export const PROTOCOL_VERSION = 1;
 export const PING_INTERVAL_MS = 25_000;
 export const IDLE_TIMEOUT_MS = 60_000;
 export const REQUEST_TIMEOUT_MS = 20_000;
+/** The shortest and the longest time a request may ask the relay to wait for its answer. */
+export const REQUEST_TIMEOUT_MIN_MS = 1_000;
+export const REQUEST_TIMEOUT_MAX_MS = 600_000;
 export const MAX_FRAME_BYTES = 8 * 1024 * 1024;
 
 export const CLOSE_REPLACED = 4001;
@@ -26,7 +29,14 @@ export type ErrorCode =
 
 export type RpcError = { code: ErrorCode; message: string };
 
-export type RequestFrame = { t: "req"; id: string; method: string; params?: unknown };
+export type RequestFrame = {
+  t: "req";
+  id: string;
+  method: string;
+  params?: unknown;
+  /** How long the relay waits for the answer, when the default is too short. Client to relay only. */
+  timeout_ms?: number;
+};
 export type ResponseFrame =
   | { t: "res"; id: string; ok: true; result: unknown }
   | { t: "res"; id: string; ok: false; error: RpcError };

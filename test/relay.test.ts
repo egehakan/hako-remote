@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Relay, type RelaySocket } from "../server/relay.ts";
+import { Relay, type RelaySocket, requestTimeout } from "../server/relay.ts";
 import { encodeOutputFrame } from "../shared/frames.ts";
 
 type Sent = Record<string, any>;
@@ -292,4 +292,37 @@ test("ending a login session closes its sockets with 4401 and leaves the others 
   assert.equal(mine.closedWith, 4401);
   assert.equal(other.closedWith, null);
   assert.equal(relay.clientCount, 1);
+});
+
+test("a request may ask for more time than the default, and then outlasts it", async () => {
+  const { relay, agent, connect } = setup({ requestTimeoutMs: 20 });
+  const { socket, id } = connect();
+  request(relay, id, "1", "workspace.list");
+  relay.handleClientMessage(
+    id,
+    JSON.stringify({ t: "req", id: "2", method: "git.push", params: {}, timeout_ms: 5_000 }),
+  );
+  const forwarded = agent.json.find((frame) => frame.method === "git.push")!;
+  // The agent is not told how long the client is willing to wait.
+  assert.equal("timeout_ms" in forwarded, false);
+
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  const timedOut = socket.json.filter((frame) => frame.t === "res");
+  assert.deepEqual(
+    timedOut.map((frame) => [frame.id, frame.error?.code]),
+    [["1", "timeout"]],
+  );
+
+  answer(relay, agent, forwarded, { output: "done" });
+  assert.deepEqual(socket.last(), { t: "res", id: "2", ok: true, result: { output: "done" } });
+});
+
+test("the time a request asks for is kept within the relay's limits", () => {
+  assert.equal(requestTimeout(undefined, 20_000), 20_000);
+  assert.equal(requestTimeout("300000", 20_000), 20_000);
+  assert.equal(requestTimeout(Number.NaN, 20_000), 20_000);
+  assert.equal(requestTimeout(300_000.7, 20_000), 300_000);
+  assert.equal(requestTimeout(5, 20_000), 1_000);
+  assert.equal(requestTimeout(-1, 20_000), 1_000);
+  assert.equal(requestTimeout(86_400_000, 20_000), 600_000);
 });

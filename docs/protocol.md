@@ -97,6 +97,19 @@ in 20 seconds fails at the relay with `timeout`; a response that arrives later i
 agent is offline every request fails at once with `agent_offline`, and requests in flight when the
 agent drops fail the same way. Notifications sent while the agent is offline are dropped.
 
+A client may ask the relay to wait longer, or less long, for one request by putting `timeout_ms`, a
+number of milliseconds, beside `params`:
+
+```jsonc
+{ "t": "req", "id": "8", "method": "git.push", "params": { "repo": "…" }, "timeout_ms": 300000 }
+```
+
+The relay then waits that long for this request, kept within 1,000 and 600,000 (a fraction is
+dropped); anything that is not a finite number means the default 20 seconds. The relay decides this
+from the field alone, never from the method name, and does not pass the field on: the agent sees
+the same request frame as ever. The client uses it for the few methods that may legitimately take
+long, which are named where they are described.
+
 The relay also sends the agent requests of its own. Their ids start with `relay:` and the agent
 answers them like any other request.
 

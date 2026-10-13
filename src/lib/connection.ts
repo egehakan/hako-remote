@@ -79,7 +79,11 @@ class RelayConnection {
     this.set({ link: "idle", agent: null });
   }
 
-  request<T>(method: string, params: object = {}): Promise<T> {
+  /**
+   * Asks the Mac for something. `timeoutMs` is for the few requests that may take longer than the
+   * relay waits by default; the relay keeps it within its own limits.
+   */
+  request<T>(method: string, params: object = {}, timeoutMs?: number): Promise<T> {
     const socket = this.socket;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       return Promise.reject(new RpcFailure("disconnected", "Not connected to the relay"));
@@ -87,7 +91,15 @@ class RelayConnection {
     const id = String(this.nextRequestId++);
     return new Promise<T>((resolve, reject) => {
       this.pending.set(id, { resolve: resolve as (value: unknown) => void, reject });
-      socket.send(JSON.stringify({ t: "req", id, method, params }));
+      socket.send(
+        JSON.stringify({
+          t: "req",
+          id,
+          method,
+          params,
+          ...(timeoutMs === undefined ? {} : { timeout_ms: timeoutMs }),
+        }),
+      );
     });
   }
 
