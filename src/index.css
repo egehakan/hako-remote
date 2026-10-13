@@ -182,3 +182,140 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* The file view's editor fills the room it is given. */
+.code-host .cm-editor {
+  height: 100%;
+}
+
+.code-host .cm-scroller {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Markdown, rendered: a document to read, in the app's own type. */
+.markdown {
+  font-size: 1rem;
+  line-height: 1.65;
+  overflow-wrap: break-word;
+}
+
+.markdown > * + * {
+  margin-top: 1em;
+}
+
+.markdown :is(h1, h2, h3, h4, h5, h6) {
+  margin-top: 1.6em;
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+
+.markdown > :first-child {
+  margin-top: 0;
+}
+
+.markdown h1 {
+  font-size: 1.625rem;
+}
+
+.markdown h2 {
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--border);
+  font-size: 1.3125rem;
+}
+
+.markdown h3 {
+  font-size: 1.125rem;
+}
+
+.markdown a[href] {
+  color: var(--lid);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, var(--lid) 45%, transparent);
+  text-underline-offset: 0.2em;
+}
+
+.markdown :is(ul, ol) {
+  padding-left: 1.5em;
+}
+
+.markdown ul {
+  list-style: disc;
+}
+
+.markdown ol {
+  list-style: decimal;
+}
+
+.markdown li + li {
+  margin-top: 0.3em;
+}
+
+.markdown li:has(> input[type="checkbox"]) {
+  list-style: none;
+  margin-left: -1.35em;
+}
+
+.markdown input[type="checkbox"] {
+  margin-right: 0.5em;
+  accent-color: var(--amber);
+}
+
+.markdown :is(code, pre) {
+  font-family: "Commit Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.8125rem;
+}
+
+.markdown :not(pre) > code {
+  padding: 0.15em 0.35em;
+  border-radius: 0.3em;
+  background: var(--muted);
+}
+
+.markdown pre {
+  overflow-x: auto;
+  padding: 0.85em 1em;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--well);
+  line-height: 1.6;
+}
+
+.markdown blockquote {
+  padding-left: 1em;
+  border-left: 3px solid var(--input);
+  color: var(--muted-foreground);
+}
+
+.markdown table {
+  display: block;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.markdown :is(th, td) {
+  padding: 0.4em 0.75em;
+  border: 1px solid var(--border);
+  text-align: left;
+}
+
+.markdown th {
+  background: var(--card);
+  font-weight: 600;
+}
+
+.markdown hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.markdown .md-picture {
+  display: inline-block;
+  padding: 0.1em 0.5em;
+  border: 1px dashed var(--input);
+  border-radius: 0.4em;
+  color: var(--muted-foreground);
+  font-size: 0.875rem;
+}
