@@ -3,7 +3,20 @@
 //
 //   pnpm mock-agent
 //   RELAY_URL=wss://example.com/ws/agent HAKO_AGENT_KEY=... pnpm mock-agent
+//
+// One of its terminals is a REAL shell on this computer, started in a throwaway directory, so that
+// full-screen programs can be tried. Whoever can log in to the relay can type into it. Against a
+// relay on this computer the shell is on by default; against any other relay it needs MOCK_SHELL=1.
+// MOCK_SHELL=0 turns it off, and MOCK_SHELL_DIR chooses the directory.
+//
+// `kill -USR1 <pid>` drops the next output frame of every terminal a client is watching, which is
+// how to see a client recover from a gap.
 
+import { type ChildProcess, spawn } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
 import { encodeOutputFrame } from "../shared/frames.ts";
 import {
@@ -25,6 +38,7 @@ const HOME = "/Users/ege";
 const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 32;
 const SCROLLBACK_BYTES = 64 * 1024;
+const SHELL_SCROLLBACK_BYTES = 512 * 1024;
 const WORKSPACE_CHANGED_MIN_INTERVAL_MS = 500;
 const CLOSE_REPLACED = 4001;
 
@@ -55,18 +69,101 @@ function sendEvent(event: string, data: object): void {
 
 // Terminals
 
-class FakeTerminal {
+/** What every mock terminal shares: the output stream, its offsets, and the snapshot. */
+abstract class MockTerminal {
   readonly sessionId: string;
   cols = DEFAULT_COLS;
   rows = DEFAULT_ROWS;
   streaming = false;
+  /** Set by SIGUSR1: the next output frame is lost on the way, as a flaky link would lose it. */
+  dropNextFrame = false;
   private seq = 0;
   private scrollback = new Uint8Array(0);
+  private truncated = false;
+  private readonly scrollbackLimit: number;
+
+  constructor(sessionId: string, scrollbackLimit: number) {
+    this.sessionId = sessionId;
+    this.scrollbackLimit = scrollbackLimit;
+  }
+
+  abstract input(data: string): void;
+  protected abstract applySize(cols: number, rows: number): void;
+  protected abstract dispose(): void;
+
+  protected emit(bytes: Uint8Array): void {
+    const start = this.seq;
+    this.seq += bytes.length;
+    const joined = new Uint8Array(this.scrollback.length + bytes.length);
+    joined.set(this.scrollback);
+    joined.set(bytes, this.scrollback.length);
+    if (joined.length > this.scrollbackLimit) this.truncated = true;
+    this.scrollback = joined.subarray(Math.max(0, joined.length - this.scrollbackLimit));
+    if (!this.streaming || connection?.readyState !== WebSocket.OPEN) return;
+    if (this.dropNextFrame) {
+      this.dropNextFrame = false;
+      console.log(`dropped ${bytes.length} bytes of ${this.sessionId} at offset ${start}`);
+      return;
+    }
+    connection.send(encodeOutputFrame(this.sessionId, start, bytes));
+  }
+
+  /**
+   * The snapshot is a replay of recent output, which is enough for a mock. The real app sends the
+   * screen as its emulator holds it.
+   */
+  subscribe() {
+    this.streaming = true;
+    let recent = this.scrollback;
+    if (this.truncated) {
+      // The cut may have landed inside an escape sequence, so start at the next line.
+      const newline = recent.indexOf(0x0a);
+      if (newline !== -1) recent = recent.subarray(newline + 1);
+    }
+    return {
+      cols: this.cols,
+      rows: this.rows,
+      seq: this.seq,
+      snapshot: Buffer.from(recent).toString("base64"),
+    };
+  }
+
+  resize(cols: number, rows: number) {
+    if (cols !== this.cols || rows !== this.rows) {
+      this.cols = cols;
+      this.rows = rows;
+      this.applySize(cols, rows);
+      sendEvent("term.size", { session_id: this.sessionId, cols, rows });
+    }
+    return { cols, rows };
+  }
+
+  /** Nobody is watching any more, so the Mac takes its own size back. */
+  stopStreaming(): void {
+    this.streaming = false;
+    this.resize(DEFAULT_COLS, DEFAULT_ROWS);
+  }
+
+  /** Ends the session as closing its tab does, which subscribers are told about. */
+  close(): void {
+    this.dispose();
+    if (this.streaming) sendEvent("term.closed", { session_id: this.sessionId });
+    this.streaming = false;
+  }
+
+  /** Ends the session without a word, as when the whole app goes away. */
+  abandon(): void {
+    this.dispose();
+    this.streaming = false;
+  }
+}
+
+class FakeTerminal extends MockTerminal {
   private tick = 0;
   private readonly timer: ReturnType<typeof setInterval>;
 
   constructor(sessionId: string, cwd: string) {
-    this.sessionId = sessionId;
+    super(sessionId, SCROLLBACK_BYTES);
     this.write(`\x1b[2mmock session ${sessionId} in ${cwd}\x1b[0m\r\n`);
     this.timer = setInterval(() => {
       this.tick += 1;
@@ -75,17 +172,8 @@ class FakeTerminal {
     }, 1000);
   }
 
-  write(text: string): void {
-    const bytes = encoder.encode(text);
-    const start = this.seq;
-    this.seq += bytes.length;
-    const joined = new Uint8Array(this.scrollback.length + bytes.length);
-    joined.set(this.scrollback);
-    joined.set(bytes, this.scrollback.length);
-    this.scrollback = joined.subarray(Math.max(0, joined.length - SCROLLBACK_BYTES));
-    if (this.streaming && connection?.readyState === WebSocket.OPEN) {
-      connection.send(encodeOutputFrame(this.sessionId, start, bytes));
-    }
+  private write(text: string): void {
+    this.emit(encoder.encode(text));
   }
 
   /** Echoes input the way a line-mode shell would, so typing is visible. */
@@ -93,31 +181,91 @@ class FakeTerminal {
     this.write(`\x1b[36m${data.replaceAll("\r", "\r\n")}\x1b[0m`);
   }
 
-  subscribe() {
-    this.streaming = true;
-    return {
-      cols: this.cols,
-      rows: this.rows,
-      seq: this.seq,
-      snapshot: Buffer.from(this.scrollback).toString("base64"),
-    };
-  }
+  protected applySize(): void {}
 
-  resize(cols: number, rows: number) {
-    this.cols = cols;
-    this.rows = rows;
-    sendEvent("term.size", { session_id: this.sessionId, cols, rows });
-    return { cols, rows };
-  }
-
-  close(): void {
+  protected dispose(): void {
     clearInterval(this.timer);
-    if (this.streaming) sendEvent("term.closed", { session_id: this.sessionId });
-    this.streaming = false;
   }
 }
 
-const terminals = new Map<string, FakeTerminal>();
+// The real shell
+
+function shellWanted(): boolean {
+  if (process.env.MOCK_SHELL === "0") return false;
+  if (process.env.MOCK_SHELL === "1") return true;
+  const host = new URL(RELAY_URL).hostname;
+  return host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+}
+
+const SHELL_ENABLED = shellWanted();
+const PTY_HELPER = fileURLToPath(new URL("./pty-helper.py", import.meta.url));
+let shellDirectory: string | null = null;
+let shellDirectoryIsOurs = false;
+
+/** The directory real shells start in, with a prompt of its own instead of the owner's dotfiles. */
+function shellHome(): string {
+  if (shellDirectory !== null) return shellDirectory;
+  if (process.env.MOCK_SHELL_DIR) {
+    shellDirectory = process.env.MOCK_SHELL_DIR;
+    mkdirSync(shellDirectory, { recursive: true });
+  } else {
+    shellDirectory = mkdtempSync(join(tmpdir(), "hako-mock-shell-"));
+    shellDirectoryIsOurs = true;
+  }
+  writeFileSync(
+    join(shellDirectory, ".zshrc"),
+    "PROMPT='%F{yellow}mock%f %1~ %# '\nunsetopt beep\n",
+  );
+  return shellDirectory;
+}
+
+class ShellTerminal extends MockTerminal {
+  private readonly child: ChildProcess;
+  /** Called when the shell exits by itself, so its tab can go too. */
+  onExit: () => void = () => {};
+
+  constructor(sessionId: string) {
+    super(sessionId, SHELL_SCROLLBACK_BYTES);
+    const home = shellHome();
+    const shell = existsSync("/bin/zsh") ? ["/bin/zsh", "-i"] : ["/bin/sh", "-i"];
+    this.child = spawn("python3", [PTY_HELPER, String(this.cols), String(this.rows), ...shell], {
+      cwd: home,
+      stdio: ["pipe", "pipe", "inherit", "pipe"],
+      // A fresh environment: the mock agent's own holds the agent key and must not reach the shell.
+      env: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        HOME: home,
+        ZDOTDIR: home,
+        HISTFILE: "/dev/null",
+        TERM: "xterm-256color",
+        COLORTERM: "truecolor",
+        LANG: process.env.LANG ?? "en_US.UTF-8",
+        SHELL: shell[0],
+      },
+    });
+    this.child.stdout?.on("data", (chunk: Buffer) => this.emit(new Uint8Array(chunk)));
+    this.child.stdin?.on("error", () => {});
+    this.child.on("error", (error) => {
+      console.error(`could not start the shell (python3 is needed): ${error.message}`);
+    });
+    this.child.on("exit", () => this.onExit());
+  }
+
+  input(data: string): void {
+    this.child.stdin?.write(data);
+  }
+
+  protected applySize(cols: number, rows: number): void {
+    (this.child.stdio[3] as NodeJS.WritableStream | null)?.write(`${cols} ${rows}\n`);
+  }
+
+  protected dispose(): void {
+    this.child.removeAllListeners("exit");
+    this.child.kill("SIGTERM");
+  }
+}
+
+const terminals = new Map<string, MockTerminal>();
 let nextId = 1;
 
 function newId(prefix: string): string {
@@ -137,6 +285,29 @@ function terminalPane(
 
 function tab(title: string, folderId: string | null, panes: Pane[], active = false): Tab {
   return { id: newId("tab"), title, active, folder_id: folderId, panes };
+}
+
+/** A pane running a real shell. `cwd` is only what the workspace list shows for it. */
+function shellPane(cwd: string): Pane {
+  const sessionId = newId("sess");
+  const terminal = new ShellTerminal(sessionId);
+  terminal.onExit = () => {
+    console.log(`the shell of ${sessionId} exited`);
+    for (const window of windows) {
+      const owner = window.tabs.find((item) => item.panes.some((p) => p.session_id === sessionId));
+      if (owner) removeTab(window, owner);
+    }
+  };
+  terminals.set(sessionId, terminal);
+  return {
+    id: newId("pane"),
+    kind: "terminal",
+    title: "zsh",
+    focused: true,
+    session_id: sessionId,
+    cwd,
+    agent: null,
+  };
 }
 
 // Workspace
@@ -212,6 +383,7 @@ function seedWorkspace(): Window[] {
             message: "Allow running pnpm test?",
           }),
         ]),
+        ...(SHELL_ENABLED ? [tab("real shell", null, [shellPane(shellHome())])] : []),
         tab("htop", null, [terminalPane("htop", HOME)]),
         tab("ssh pi@garage", null, [terminalPane("ssh", HOME)]),
       ],
@@ -258,12 +430,29 @@ function findTab(tabId: unknown): { window: Window; tab: Tab; index: number } {
   throw new RpcFailure("not_found", "No such tab");
 }
 
+/** Takes a tab out of its window, ends its terminals and moves the active mark to a neighbour. */
+function removeTab(window: Window, closed: Tab): void {
+  const index = window.tabs.indexOf(closed);
+  if (index === -1) return;
+  window.tabs.splice(index, 1);
+  for (const pane of closed.panes) {
+    if (pane.session_id === null) continue;
+    terminals.get(pane.session_id)?.close();
+    terminals.delete(pane.session_id);
+  }
+  if (closed.active) {
+    const neighbour = window.tabs[Math.min(index, window.tabs.length - 1)];
+    if (neighbour) neighbour.active = true;
+  }
+  workspaceChanged();
+}
+
 function activate(window: Window, tabId: string): void {
   for (const candidate of windows) candidate.active = candidate === window;
   for (const candidate of window.tabs) candidate.active = candidate.id === tabId;
 }
 
-function terminalFor(params: Record<string, unknown>): FakeTerminal {
+function terminalFor(params: Record<string, unknown>): MockTerminal {
   const terminal = terminals.get(String(params.session_id ?? ""));
   if (!terminal) throw new RpcFailure("not_found", "No such terminal session");
   return terminal;
@@ -332,7 +521,8 @@ const methods: Record<string, (params: Record<string, unknown>) => unknown> = {
     }
     const directory =
       folder?.directory ?? (typeof params.directory === "string" ? params.directory : HOME);
-    const pane = terminalPane("zsh", directory);
+    // A real shell never starts in the directory the workspace names: that would be a real folder.
+    const pane = SHELL_ENABLED ? shellPane(directory) : terminalPane("zsh", directory);
     const created = tab("zsh", folder?.id ?? null, [pane]);
     // A folder's tabs sit together: the new one goes after the folder's last tab.
     const lastInFolder = folder
@@ -353,30 +543,14 @@ const methods: Record<string, (params: Record<string, unknown>) => unknown> = {
 
   "tab.close": (params) => {
     const found = findTab(params.tab_id);
-    found.window.tabs.splice(found.index, 1);
-    for (const pane of found.tab.panes) {
-      if (pane.session_id === null) continue;
-      terminals.get(pane.session_id)?.close();
-      terminals.delete(pane.session_id);
-    }
-    if (found.tab.active) {
-      const neighbour = found.window.tabs[Math.min(found.index, found.window.tabs.length - 1)];
-      if (neighbour) neighbour.active = true;
-    }
-    workspaceChanged();
+    removeTab(found.window, found.tab);
     return {};
   },
 
   "term.subscribe": (params) => terminalFor(params).subscribe(),
 
   "term.unsubscribe": (params) => {
-    const terminal = terminals.get(String(params.session_id ?? ""));
-    if (terminal) {
-      terminal.streaming = false;
-      // Nobody is watching any more, so the Mac takes its own size back.
-      terminal.cols = DEFAULT_COLS;
-      terminal.rows = DEFAULT_ROWS;
-    }
+    terminals.get(String(params.session_id ?? ""))?.stopStreaming();
     return {};
   },
 
@@ -467,7 +641,8 @@ function connect(): void {
   ws.on("close", (code) => {
     if (heartbeat) clearInterval(heartbeat);
     if (connection === ws) connection = null;
-    for (const terminal of terminals.values()) terminal.streaming = false;
+    // With the relay gone nobody is subscribed, which also gives every terminal its own size back.
+    for (const terminal of terminals.values()) terminal.stopStreaming();
     if (stopping) return;
     // Another agent took this one's place: wait the full backoff instead of fighting over the slot.
     const wait = code === CLOSE_REPLACED ? 30_000 : backoffMs;
@@ -479,10 +654,24 @@ function connect(): void {
 
 function stop(): void {
   stopping = true;
+  // To a client this must look like a Mac that went offline, not like terminals that ended.
+  for (const terminal of terminals.values()) terminal.abandon();
+  if (shellDirectory !== null && shellDirectoryIsOurs) {
+    rmSync(shellDirectory, { recursive: true, force: true });
+  }
   connection?.close(1000);
   setTimeout(() => process.exit(0), 200);
 }
 process.on("SIGINT", stop);
 process.on("SIGTERM", stop);
+process.on("SIGUSR1", () => {
+  for (const terminal of terminals.values()) terminal.dropNextFrame = terminal.streaming;
+});
+
+if (SHELL_ENABLED) {
+  console.log(
+    `exposing a REAL shell in ${shellHome()} to ${RELAY_URL}; stop this when you are done`,
+  );
+}
 
 connect();
