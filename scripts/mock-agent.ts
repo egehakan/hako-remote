@@ -18,6 +18,10 @@
 // MOCK_FS=0 leaves the file methods out, as an older desktop app would; MOCK_FS_DELAY_MS=1500
 // makes them slow.
 //
+// A folder can be added to the sample workspace for any directory of that tree, and a directory
+// made in it. MOCK_FOLDERS=0 leaves `folder.create` and `fs.mkdir` out, as the desktop app before
+// them would.
+//
 // Files travel in both directions through the transfer methods: downloads out of that tree, uploads
 // into it, and uploads into a throwaway "uploads area" that is removed at exit. `kill -USR2` also
 // rewrites Downloads/changes-while-read.bin, a file of several pieces. MOCK_TRANSFERS=0 leaves
@@ -35,7 +39,16 @@
 // session id after it to choose the terminal: `echo "agent_waiting sess-0007" > <file>`.
 
 import { type ChildProcess, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  accessSync,
+  constants,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -58,8 +71,10 @@ import { createGitFixture, createGitMethods, GitFailure } from "./mock-git.ts";
 import {
   createFixture,
   createFsMethods,
+  failure,
   FsFailure,
   removeFixture,
+  resolveInFixture,
   rewriteChangingFile,
   rewriteConflictFile,
 } from "./mock-files.ts";
@@ -70,6 +85,7 @@ const AGENT_KEY = process.env.HAKO_AGENT_KEY ?? "";
 const FS_ENABLED = process.env.MOCK_FS !== "0";
 const FS_DELAY_MS = Number(process.env.MOCK_FS_DELAY_MS ?? 0);
 const TRANSFERS_ENABLED = FS_ENABLED && process.env.MOCK_TRANSFERS !== "0";
+const FOLDERS_ENABLED = process.env.MOCK_FOLDERS !== "0";
 const GIT_ENABLED = process.env.MOCK_GIT !== "0";
 const GIT_DELAY_MS = Number(process.env.MOCK_GIT_DELAY_MS ?? 0);
 const DEFAULT_COLS = 120;
@@ -616,6 +632,47 @@ const methods: Record<string, Method> = {
   "theme.get": () => THEME,
 };
 
+const folderMethods: Record<string, Method> = FOLDERS_ENABLED
+  ? {
+      "folder.create": (params) => {
+        const directory = params.directory;
+        const real = resolveInFixture(HOME, directory);
+        const shown = String(directory);
+        try {
+          if (!statSync(real).isDirectory()) {
+            throw new FsFailure("not_a_directory", `${shown} is not a directory`);
+          }
+          accessSync(real, constants.R_OK | constants.X_OK);
+        } catch (error) {
+          throw failure(error, shown);
+        }
+        let window: Window | undefined;
+        if (typeof params.window_id === "string") {
+          window = windows.find((candidate) => candidate.id === params.window_id);
+          if (!window) throw new RpcFailure("not_found", "No such window");
+        } else {
+          window = windows.find((candidate) => candidate.active) ?? windows[0];
+        }
+        if (!window) {
+          window = { id: newId("win"), active: true, folders: [], tabs: [] };
+          windows.push(window);
+        }
+        const existing = window.folders.find((folder) => folder.directory === shown);
+        if (existing) return { folder_id: existing.id };
+        const folder: Folder = {
+          id: newId("folder"),
+          name: shown === HOME ? "Home" : shown.slice(shown.lastIndexOf("/") + 1) || "/",
+          directory: shown,
+          color: null,
+          icon: null,
+        };
+        window.folders.push(folder);
+        workspaceChanged();
+        return { folder_id: folder.id };
+      },
+    }
+  : {};
+
 const transfers = TRANSFERS_ENABLED
   ? createTransferMethods(HOME, {
       idleMs: process.env.MOCK_UPLOAD_IDLE_MS ? Number(process.env.MOCK_UPLOAD_IDLE_MS) : undefined,
@@ -625,6 +682,7 @@ const transfers = TRANSFERS_ENABLED
 const fsMethods: Record<string, Method> = FS_ENABLED
   ? { ...createFsMethods(HOME, () => windows), ...transfers?.methods }
   : {};
+if (!FOLDERS_ENABLED) delete fsMethods["fs.mkdir"];
 const gitMethods: Record<string, Method> = GIT_ENABLED
   ? createGitMethods(HOME, () => windows, {
       empty: process.env.MOCK_GIT_EMPTY === "1",
@@ -658,7 +716,11 @@ function handleFrame(text: string): void {
     : Object.hasOwn(gitMethods, frame.method)
       ? GIT_DELAY_MS
       : 0;
-  const method = methods[frame.method] ?? fsMethods[frame.method] ?? gitMethods[frame.method];
+  const method =
+    methods[frame.method] ??
+    folderMethods[frame.method] ??
+    fsMethods[frame.method] ??
+    gitMethods[frame.method];
   if (!method) {
     send({
       t: "res",
@@ -919,6 +981,8 @@ if (transfers) {
 } else if (FS_ENABLED) {
   console.log("the transfer methods are off (MOCK_TRANSFERS=0)");
 }
+
+if (!FOLDERS_ENABLED) console.log("folder.create and fs.mkdir are off (MOCK_FOLDERS=0)");
 
 if (GIT_FIXTURE) {
   console.log(

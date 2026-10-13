@@ -32,6 +32,7 @@ import {
   imageMime,
   isValidPath,
   LIST_LIMIT,
+  nameProblem,
   TEXT_LIMIT_BYTES,
 } from "../shared/files.ts";
 import { TRANSFER_CHUNK_BYTES, TRANSFER_MAX_BYTES } from "../shared/transfers.ts";
@@ -837,6 +838,37 @@ export function createFsMethods(root: string, windows: () => Window[]) {
           throw error;
         }
         return { mtime: mtimeOf(statSync(file)), size: bytes.length };
+      } catch (error) {
+        throw failure(error, path);
+      }
+    },
+
+    "fs.mkdir": (params: Record<string, unknown>): Record<string, never> => {
+      const path = params.path;
+      if (!isValidPath(path)) {
+        throw new FsFailure("bad_request", "path must be an absolute, normalised path");
+      }
+      const cut = path.lastIndexOf("/");
+      const name = path.slice(cut + 1);
+      if (nameProblem(name) !== null) {
+        throw new FsFailure(
+          "bad_request",
+          "The last part of path must be a name of 1 to 255 bytes, without / or NUL",
+        );
+      }
+      const shownParent = cut === 0 ? "/" : path.slice(0, cut);
+      const parent = resolve(shownParent);
+      try {
+        if (!statSync(parent).isDirectory()) {
+          throw new FsFailure("not_a_directory", `${shownParent} is not a directory`);
+        }
+        const target = join(parent, name);
+        // A link that points nowhere is an entry too, which is why this does not follow links.
+        if (lstatSync(target, { throwIfNoEntry: false }) !== undefined) {
+          throw new FsFailure("conflict", `${path} already exists`);
+        }
+        mkdirSync(target);
+        return {};
       } catch (error) {
         throw failure(error, path);
       }
