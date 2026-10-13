@@ -108,6 +108,7 @@
      that an on-screen keyboard, which covers the page without resizing it, does not hide its keys. */
   --vv-height: var(--app-height, 100%);
   --vv-top: 0px;
+  --vv-pinned-top: 0px;
 
   color-scheme: dark;
 }
