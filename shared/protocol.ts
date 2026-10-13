@@ -25,7 +25,10 @@ export type ErrorCode =
   | "is_a_directory"
   | "permission_denied"
   | "conflict"
-  | "too_large";
+  | "too_large"
+  // Source control's own.
+  | "git_failed"
+  | "busy";
 
 export type RpcError = { code: ErrorCode; message: string };
 
@@ -132,3 +135,57 @@ export type FsReadResult =
 
 export type FsWriteParams = { path: string; content: string; expected_mtime: number | null };
 export type FsWriteResult = { mtime: number; size: number };
+
+export type GitOperation = "merge" | "rebase" | "cherry-pick" | "revert";
+
+export type GitRepo = {
+  /** The root of the working tree, which is how every other method names the repository. */
+  path: string;
+  name: string;
+  /** The folder directory the repository belongs to. */
+  root: string;
+  is_worktree: boolean;
+  /** For a linked worktree, the working tree of the repository it belongs to. */
+  main_path: string | null;
+  /** Null when HEAD is detached. */
+  branch: string | null;
+  /** The full id of the commit HEAD is at, or null before the first commit. */
+  head: string | null;
+  /** The branch this one tracks, such as `origin/main`, or null when it tracks none. */
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  changed: number;
+  operation: GitOperation | null;
+};
+
+export type GitFileState =
+  "modified" | "added" | "deleted" | "renamed" | "untracked" | "conflicted";
+
+export type GitFile = {
+  /** Relative to the repository's `path`. */
+  path: string;
+  /** Where a renamed file was before; null for every other status. */
+  old_path: string | null;
+  status: GitFileState;
+  additions: number | null;
+  deletions: number | null;
+  binary: boolean;
+};
+
+export type GitReposResult = { repos: GitRepo[] };
+export type GitStatusResult = { repo: GitRepo; files: GitFile[]; truncated: boolean };
+
+export type GitDiffParams = { repo: string; path: string; old_path?: string | null };
+export type GitDiffResult =
+  | { kind: "text"; diff: string }
+  | { kind: "binary"; old_size: number | null; new_size: number | null }
+  | { kind: "too_large"; limit: number };
+
+export type GitCommitResult = { commit: string; output: string; repo: GitRepo };
+export type GitPushResult = { output: string; published: boolean; repo: GitRepo };
+export type GitPullResult = { output: string; repo: GitRepo };
+export type GitDiscardResult = { repo: GitRepo };
+
+/** `repo` is null when more than one repository, or the set of repositories, may have changed. */
+export type GitChangedEvent = { repo: string | null };

@@ -21,6 +21,8 @@ export function describeFailure(error: unknown): string {
     case "permission_denied":
     case "conflict":
     case "too_large":
+    case "git_failed":
+    case "busy":
       return error.message || "Your Mac couldn’t do that.";
   }
 }
