@@ -3,6 +3,7 @@ import {
   ArrowDownToLineIcon,
   ChevronLeftIcon,
   ChevronsUpDownIcon,
+  FolderOpenIcon,
   MonitorIcon,
   SmartphoneIcon,
 } from "lucide-react";
@@ -482,6 +483,19 @@ function TerminalHeader({
         ) : null}
       </button>
       {current?.pane.agent ? <AgentBadge agent={current.pane.agent} /> : null}
+      {current?.pane.cwd ? (
+        <Button
+          variant="ghost"
+          size="icon-touch"
+          className="size-11 text-muted-foreground"
+          aria-label="Files here"
+          title="Files here"
+          nativeButton={false}
+          render={<a href={routes.dir(current.pane.cwd)} />}
+        >
+          <FolderOpenIcon />
+        </Button>
+      ) : null}
       <button
         type="button"
         aria-label={
@@ -489,7 +503,7 @@ function TerminalHeader({
             ? `Size and zoom. ${size.cols} by ${size.rows}, ${fitPhone ? "fitted to this screen" : "your Mac’s size"}`
             : "Size and zoom"
         }
-        className="ml-1 flex h-11 shrink-0 items-center gap-1.5 rounded-md px-2 font-mono text-xs text-muted-foreground outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring/70"
+        className="flex h-11 shrink-0 items-center gap-1.5 rounded-md px-2 font-mono text-xs text-muted-foreground outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring/70"
         onClick={onOpenView}
       >
         <SizeIcon aria-hidden="true" className={cn("size-4", fitPhone && "text-amber")} />
