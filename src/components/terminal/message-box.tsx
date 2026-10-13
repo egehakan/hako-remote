@@ -1,20 +1,30 @@
-import { SendHorizontalIcon } from "lucide-react";
+import { ImagePlusIcon, SendHorizontalIcon } from "lucide-react";
 import { type Ref, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { TerminalController } from "@/lib/terminal/controller";
+import { cn } from "@/lib/utils";
+import type { Attach } from "./attach";
 
-export type MessageBoxHandle = { focus: () => void; blur: () => void };
+export type MessageBoxHandle = {
+  focus: () => void;
+  blur: () => void;
+  /** Adds the path of an attached picture to the end of what is written so far. */
+  insert: (text: string) => void;
+};
 
 type MessageBoxProps = {
   ref: Ref<MessageBoxHandle>;
   controller: TerminalController;
   sessionId: string;
   enabled: boolean;
+  attach: Pick<Attach, "pick" | "available">;
   onFocusChange: (focused: boolean) => void;
 };
 
 /** Unsent text per terminal, so switching terminals or modes does not lose a half-written prompt. */
 const drafts = new Map<string, string>();
+/** The paths of attached pictures a draft was given, to know a message that names one. */
+const attachments = new Map<string, string[]>();
 
 const MAX_HEIGHT_PX = 144;
 
@@ -27,6 +37,7 @@ export function MessageBox({
   controller,
   sessionId,
   enabled,
+  attach,
   onFocusChange,
 }: MessageBoxProps) {
   const field = useRef<HTMLTextAreaElement>(null);
@@ -35,6 +46,12 @@ export function MessageBox({
   useImperativeHandle(ref, () => ({
     focus: () => field.current?.focus({ preventScroll: true }),
     blur: () => field.current?.blur(),
+    insert: (addition) => {
+      attachments.set(sessionId, [...(attachments.get(sessionId) ?? []), addition.trim()]);
+      setText((before) =>
+        before === "" || /\s$/.test(before) ? before + addition : `${before} ${addition}`,
+      );
+    },
   }));
 
   useEffect(() => {
@@ -47,12 +64,25 @@ export function MessageBox({
 
   const send = (enter: boolean) => {
     if (!enabled) return;
-    controller.message(text, enter);
+    const attached = (attachments.get(sessionId) ?? []).some((path) => text.includes(path));
+    controller.message(text, enter, attached);
+    attachments.delete(sessionId);
     setText("");
   };
 
   return (
     <div className="flex items-end gap-1.5 px-1 pt-1.5">
+      <Button
+        variant="ghost"
+        className={cn("size-10 text-muted-foreground", !attach.available && "opacity-40")}
+        aria-label="Attach a picture"
+        title="Attach a picture"
+        aria-disabled={!attach.available}
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={attach.pick}
+      >
+        <ImagePlusIcon className="size-5" />
+      </Button>
       <textarea
         ref={field}
         aria-label="Message for the terminal"

@@ -20,6 +20,14 @@ const TONES = {
   armed: "bg-amber text-primary-foreground",
 } as const;
 
+/** How a key of the key bar looks, for the one key that has to be a plain button. */
+export function keyClasses(tone: keyof typeof TONES = "key"): string {
+  return cn(
+    "flex h-10 min-w-0 touch-manipulation items-center justify-center rounded-md font-mono text-[0.8125rem] leading-none outline-none select-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-ring/70 disabled:opacity-40 [&_svg]:size-[1.125rem] [&_svg]:shrink-0",
+    TONES[tone],
+  );
+}
+
 /**
  * One key of the key bar. It acts on the pointer instead of on click, and never takes focus, so the
  * on-screen keyboard stays open and the terminal keeps its text field.
@@ -81,11 +89,7 @@ export function KeyButton({
     <button
       type="button"
       disabled={disabled}
-      className={cn(
-        "flex h-10 min-w-0 touch-manipulation items-center justify-center rounded-md font-mono text-[0.8125rem] leading-none outline-none select-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-ring/70 disabled:opacity-40 [&_svg]:size-[1.125rem] [&_svg]:shrink-0",
-        TONES[tone],
-        className,
-      )}
+      className={cn(keyClasses(tone), className)}
       // Stops the press from moving focus away from the terminal's text field.
       onMouseDown={(event) => event.preventDefault()}
       onPointerDown={press}

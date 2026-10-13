@@ -17,6 +17,7 @@ import type { TerminalController } from "@/lib/terminal/controller";
 import type { Sticky } from "@/lib/terminal/modifiers";
 import type { InputMode } from "@/lib/terminal/prefs";
 import { cn } from "@/lib/utils";
+import { type Attach, AttachKey } from "./attach";
 import { KeyButton } from "./key-button";
 
 type KeyBarProps = {
@@ -30,6 +31,7 @@ type KeyBarProps = {
   moreOpen: boolean;
   onToggleMore: () => void;
   onPaste: () => void;
+  attach: Pick<Attach, "pick" | "available">;
   /** Shown on touch devices only: whether the on-screen keyboard is up, and the way to toggle it. */
   keyboard: { open: boolean; toggle: () => void } | null;
   onSelect: () => void;
@@ -107,6 +109,7 @@ export function KeyBar({
   moreOpen,
   onToggleMore,
   onPaste,
+  attach,
   keyboard,
   onSelect,
   onView,
@@ -208,7 +211,7 @@ export function KeyBar({
           ) : null}
         </div>
 
-        <div className="grid grid-cols-7 gap-1 sm:flex-1">
+        <div className="grid grid-cols-8 gap-1 sm:flex-1">
           <KeyButton
             aria-label={
               inputMode === "message"
@@ -224,6 +227,7 @@ export function KeyBar({
           <KeyButton aria-label="Paste" disabled={!enabled} onPress={onPaste}>
             <ClipboardPasteIcon aria-hidden="true" />
           </KeyButton>
+          <AttachKey attach={attach} disabled={!enabled} />
           <KeyButton
             aria-label="Left"
             repeat

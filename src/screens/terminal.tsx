@@ -18,6 +18,7 @@ import {
 } from "react";
 import { flushSync } from "react-dom";
 import { AgentBadge } from "@/components/agent-badge";
+import { useAttach } from "@/components/terminal/attach";
 import { DirectInput, type DirectInputHandle } from "@/components/terminal/direct-input";
 import { KeyBar } from "@/components/terminal/key-bar";
 import { MessageBox, type MessageBoxHandle } from "@/components/terminal/message-box";
@@ -156,6 +157,21 @@ export default function TerminalScreen({ sessionId }: { sessionId: string }) {
     () => (touch ? true : (controller?.surface.terminal.textarea ?? true)),
     [controller, touch],
   );
+
+  // An attached picture's path goes where the owner is writing: the message box, or the terminal.
+  const insertAttachment = useCallback(
+    (text: string) => {
+      if (terminalPrefs.get().inputMode === "message" && messageBox.current) {
+        messageBox.current.insert(text);
+        return true;
+      }
+      if (!controller?.session.live) return false;
+      controller.paste(text);
+      return true;
+    },
+    [controller],
+  );
+  const attach = useAttach({ sessionId, insert: insertAttachment });
 
   const toggleInputMode = () => {
     const next = prefs.inputMode === "message" ? "keys" : "message";
@@ -334,6 +350,8 @@ export default function TerminalScreen({ sessionId }: { sessionId: string }) {
           {touch ? (
             <DirectInput ref={directInput} controller={controller} onFocusChange={setTyping} />
           ) : null}
+          {attach.picker}
+          {attach.chips}
           {pasteOpen ? (
             <PasteField
               onPaste={(text) => controller.paste(text)}
@@ -350,6 +368,7 @@ export default function TerminalScreen({ sessionId }: { sessionId: string }) {
               controller={controller}
               sessionId={sessionId}
               enabled={live}
+              attach={attach}
               onFocusChange={setTyping}
             />
           ) : null}
@@ -363,6 +382,7 @@ export default function TerminalScreen({ sessionId }: { sessionId: string }) {
             moreOpen={moreOpen}
             onToggleMore={() => setMoreOpen((open) => !open)}
             onPaste={paste}
+            attach={attach}
             keyboard={touch ? { open: typing, toggle: toggleKeyboard } : null}
             onSelect={() => {
               setMoreOpen(false);

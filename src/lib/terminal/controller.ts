@@ -35,6 +35,8 @@ export type ControllerOptions = {
  * paste, so the Enter of a sent message follows a moment later.
  */
 const ENTER_DELAY_MS = 80;
+/** A program that attaches a pasted picture reads the file first, which takes it a little longer. */
+const ENTER_AFTER_ATTACHMENT_MS = 300;
 
 export class TerminalController {
   readonly session: TerminalSession;
@@ -155,16 +157,22 @@ export class TerminalController {
     if (text !== "") this.send(encodePaste(text, this.surface.bracketedPaste));
   }
 
-  /** Writes a message from the message box, followed by Enter unless `enter` is false. */
-  message(text: string, enter: boolean): void {
+  /**
+   * Writes a message from the message box, followed by Enter unless `enter` is false. A message
+   * that names an attached picture goes as a paste, which is how a program recognises the path of
+   * a dropped file.
+   */
+  message(text: string, enter: boolean, attachment = false): void {
     const body = text.replace(/[\r\n]+$/, "");
     if (body !== "") {
       // Several lines go as a paste, so a program that takes pastes keeps them as one message.
-      this.send(/[\r\n]/.test(body) ? encodePaste(body, this.surface.bracketedPaste) : body);
+      const pasted = attachment || /[\r\n]/.test(body);
+      this.send(pasted ? encodePaste(body, this.surface.bracketedPaste) : body);
     }
     if (!enter) return;
+    const wait = body === "" ? 0 : attachment ? ENTER_AFTER_ATTACHMENT_MS : ENTER_DELAY_MS;
     window.clearTimeout(this.enterTimer);
-    this.enterTimer = window.setTimeout(() => this.send("\r"), body === "" ? 0 : ENTER_DELAY_MS);
+    this.enterTimer = window.setTimeout(() => this.send("\r"), wait);
   }
 
   tapModifier(key: StickyKey): void {
