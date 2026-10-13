@@ -114,7 +114,8 @@ The relay also sends the agent requests of its own. Their ids start with `relay:
 answers them like any other request.
 
 Error codes: `agent_offline`, `timeout`, `bad_request`, `not_found`, `not_supported`, `failed`. The file
-methods add a few of their own, listed under [Files](#files-sprint-4).
+methods add a few of their own, listed under [Files](#files-sprint-4), and so do the source control
+methods, listed under [Source control](#source-control-sprint-5).
 
 ### Terminal output frame (binary, agent -> relay -> subscribed clients)
 
@@ -502,19 +503,292 @@ Mac.
 
 | Method | Params | Result |
 |---|---|---|
-| `git.repos` | | `{ repos: Repo[] }`: every repository and worktree under the open folders |
-| `git.status` | `{ repo }` | `{ files: { path, status, staged }[] }` |
-| `git.diff` | `{ repo, path }` | `{ diff }` as unified diff text |
-| `git.commit` | `{ repo, message }` | `{ commit }`. Commits all changes, as the desktop button does. |
-| `git.push` / `git.pull` | `{ repo }` | `{ output }` |
-| `git.discard` | `{ repo, path? }` | `{}`. Without `path`, discards every change in the repo. |
+| `git.repos` | | `{ repos: Repo[] }` |
+| `git.status` | `{ repo }` | `{ repo: Repo, files: File[], truncated }` |
+| `git.diff` | `{ repo, path, old_path? }` | `Diff` |
+| `git.commit` | `{ repo, message }` | `{ commit, output, repo: Repo }` |
+| `git.push` | `{ repo }` | `{ output, published, repo: Repo }` |
+| `git.pull` | `{ repo }` | `{ output, repo: Repo }` |
+| `git.discard` | `{ repo, path?, old_path? }` | `{ repo: Repo }` |
 
 ```ts
 type Repo = {
-  path: string; name: string; branch: string | null; is_worktree: boolean;
-  ahead: number; behind: number; changed: number;
+  path: string;                 // the root of the working tree; this is the repository's identity
+  name: string;                 // the last segment of `path`
+  root: string;                 // the folder directory the repository belongs to
+  is_worktree: boolean;         // true for a linked worktree
+  main_path: string | null;     // linked worktrees only: the working tree of the repository it belongs to
+  branch: string | null;        // the short name of the current branch; null when HEAD is detached
+  head: string | null;          // the full id of the commit HEAD is at; null before the first commit
+  upstream: string | null;      // the branch this one tracks, such as "origin/main"; null when it tracks none
+  ahead: number;                // commits on the branch that the upstream does not have; 0 without an upstream
+  behind: number;               // commits on the upstream that the branch does not have; 0 without an upstream
+  changed: number;              // how many files `git.status` would list, before its limit
+  operation: "merge" | "rebase" | "cherry-pick" | "revert" | null;
 };
+type File = {
+  path: string;                 // relative to the repository's `path`
+  old_path: string | null;      // renamed files only: where the file was
+  status: "modified" | "added" | "deleted" | "renamed" | "untracked" | "conflicted";
+  additions: number | null;     // lines added against HEAD; null for a binary file or when not counted
+  deletions: number | null;
+  binary: boolean;
+};
+type Diff =
+  | { kind: "text"; diff: string }
+  | { kind: "binary"; old_size: number | null; new_size: number | null }
+  | { kind: "too_large"; limit: number };
 ```
+
+This is the desktop app's source control panel, from a phone: every repository under the owner's
+folders in one list, what changed in each, one file's diff, and commit, push, pull and discard for
+one repository at a time. As on the desktop there is no staging: a commit takes everything, and a
+file's status and diff describe the working tree against `HEAD`, the staged and the unstaged part
+together. The agent does all of it by running the `git` command line, and when git fails, what git
+printed is what the owner reads.
+
+#### Repositories and paths
+
+- A repository is named by `repo`: the absolute path of the root of its working tree, in the form
+  described under [Files](#paths) (it starts with `/`, is normalised, has no trailing `/`). The
+  client only ever sends back a `path` that `git.repos` or `git.status` gave it. A `repo` that is
+  missing or malformed fails with `bad_request`; one that is not the root of a working tree the
+  agent lists (any more) fails with `not_found`.
+- A file is named by `path`, relative to that root: segments separated by single `/`, none of them
+  empty, `.` or `..`, no leading and no trailing `/`. Anything else fails with `bad_request`. Names
+  are passed byte for byte; a file whose name is not valid UTF-8 is left out of `git.status`.
+- The agent never runs git anywhere but in a working tree it lists itself.
+
+#### Running git
+
+- Git never waits for the owner: its standard input is closed or empty, `GIT_TERMINAL_PROMPT=0` is
+  set, and no editor and no pager can open. A command that would need a password or a passphrase
+  that no credential helper or agent supplies fails, and its message is carried like any other.
+- Git's messages should be in English (`LC_ALL=C`, or the equivalent). What the owner is shown is
+  always git's own text; the client only reads it to put a plain title over it (a rejected push, a
+  pull that stopped at conflicts), and that reading is of English text.
+- "Git's output" below means standard output and standard error together, in the order git wrote
+  them as far as the agent can tell, decoded as UTF-8 with replacement characters, with white space
+  trimmed from both ends, and cut to its last 16,384 bytes when it is longer.
+- One command at a time changes a repository. `git.commit`, `git.push`, `git.pull` and
+  `git.discard` for a `repo` that already has one of them running fail at once with `busy`; they
+  are not queued. `git.repos`, `git.status` and `git.diff` can be answered at any time.
+
+#### `git.repos`
+
+- The repositories are found from the folders of `workspace.list`: each folder's `directory` is
+  searched for working trees, a working tree being a directory that holds a `.git` entry (a
+  directory, or the file a linked worktree or a submodule has). The search goes on inside a working
+  tree, so a repository nested in another one is listed too, each as a repository of its own. The
+  linked worktrees of every repository found (`git worktree list`) are listed as well, wherever on
+  disk they are. A bare repository has no working tree and is not listed.
+- How deep the search goes and which directories it skips (`node_modules`, build output) is the
+  desktop app's own business: the list is what its source control panel shows.
+- A working tree is listed once. `root` is the `directory` of the folder it belongs to: of the
+  folders whose directory is the working tree itself or holds it, the one with the longest
+  directory. A linked worktree that lies outside every folder has the `root` of the repository it
+  belongs to. The client groups and labels by `root`, with the folder's name from `workspace.list`.
+- Order: by `root`, in the order of the folders in `workspace.list`, then by `path`, compared as
+  strings. The client orders them differently for display.
+- `branch`, `head`, `upstream`, `ahead`, `behind` and `changed` are what
+  `git status --porcelain=v2 --branch -z --untracked-files=all` says: `branch.head` (`(detached)`
+  gives `null`), `branch.oid` (`(initial)` gives `null`), `branch.upstream`, the two numbers of
+  `branch.ab`, and the number of files as counted for `git.status`. When git prints an upstream but
+  no `branch.ab`, the upstream is configured but no longer exists: `upstream` is then `null`, as if
+  there were none. `ahead` and `behind` are against what was last fetched; the agent does not fetch.
+- `is_worktree` is true when the working tree's git directory is not the repository's common one
+  (`git rev-parse --git-dir` and `--git-common-dir` differ). `main_path` is then the directory that
+  holds the common `.git`, or `null` when the worktree belongs to a bare repository.
+- `operation` says what is unfinished in the working tree: `merge` when `MERGE_HEAD` exists in its
+  git directory, `rebase` when `rebase-merge` or `rebase-apply` does, `cherry-pick` for
+  `CHERRY_PICK_HEAD`, `revert` for `REVERT_HEAD`, in that order of precedence, else `null`.
+- A working tree git cannot read is left out rather than failing the whole list. With no folders,
+  or none that holds a repository, `repos` is empty.
+- The client sends this request with `timeout_ms: 60000`, since a first search can be slow.
+
+#### `git.status`
+
+`files` are the files that differ from `HEAD`, as
+`git status --porcelain=v2 --branch -z --untracked-files=all` reports them (`-z`, so that no name is
+quoted; every untracked file by itself, not its directory; ignored files never). Each record maps
+to at most one file, by its two status letters `XY`:
+
+| Record | `status` |
+|---|---|
+| `u …` (unmerged) | `conflicted` |
+| `? path` | `untracked` |
+| `2 XY …` (renamed) with `Y` = `D` | `deleted`, with `path` set to the original path and `old_path: null` |
+| `2 XY …` (renamed) otherwise | `renamed`, with `old_path` set to the original path |
+| `2 XY …` with `X` or `Y` = `C` (copied) | `added`, `old_path: null` |
+| `1 XY …` with `X` = `A` and `Y` = `D` | left out: `HEAD` never had the file and the working tree has not got it |
+| `1 XY …` with `X` or `Y` = `D` | `deleted` |
+| `1 XY …` with `X` or `Y` = `A` | `added` |
+| every other `1 XY …` (`M`, `T`) | `modified` |
+
+- A path that is both deleted in the index and present again as an untracked file is one file,
+  `modified`.
+- A rename is only what git itself reports as one: a file renamed in the index. A file that was
+  moved without telling git is a `deleted` and an `untracked` file.
+- An untracked directory that git reports as a whole, which it does for a repository nested inside
+  this one and not ignored, is listed as `untracked` under its path without the trailing `/`, with
+  `additions` and `deletions` `null`.
+- `additions`, `deletions` and `binary` come from `git diff HEAD --numstat -M -z`: the two counts,
+  or `null`, `null` and `binary: true` for a file git counts as binary (`-` in both columns). For
+  an untracked file the agent counts the lines of the file itself (`deletions: 0`), and calls it
+  binary when its first 8,000 bytes hold a NUL byte, as git does. The agent may answer `null` for
+  both counts whenever counting would be costly; the client then shows none.
+- In a repository without a commit, everything is compared with the empty tree instead of `HEAD`.
+- Order: by `path`, compared code point by code point. At most 2,000 files are returned;
+  `truncated` is `true` when there are more, and the files are then the first 2,000 in that order.
+- `repo` is the repository as `git.repos` would describe it at the same moment, so the client can
+  bring its list up to date; `repo.changed` counts every file, also beyond the limit.
+
+#### `git.diff`
+
+The diff of one file against `HEAD`. `path` is a file's `path` from `git.status` and `old_path` its
+`old_path` (the client sends `null` or leaves it out when there is none).
+
+- For a file git tracks, `diff` is the standard output of
+
+  ```
+  git -c core.quotePath=false diff --no-color --no-ext-diff --no-textconv --unified=3 \
+      --src-prefix=a/ --dst-prefix=b/ -M HEAD -- [<old_path>] <path>
+  ```
+
+  with `old_path` named only for a renamed file. For an untracked file it is the standard output of
+  the same command with `--no-index -- /dev/null <path>` in place of `-M HEAD -- …`, which shows
+  every line as added (git exits with status 1 there, which is not a failure). In a repository
+  without a commit the empty tree stands in for `HEAD`. So staged and unstaged changes appear
+  together, a deleted file shows every line removed, a file in conflict shows its conflict markers
+  as added lines, and the options make the output independent of the owner's git configuration:
+  three lines of context, `a/` and `b/` prefixes, names never quoted.
+- The text is decoded as UTF-8; bytes that are not valid UTF-8 become U+FFFD. It is the diff of that
+  one file: one header and its hunks. The client reads the hunks and nothing else from it, apart
+  from `rename from`, `old mode` and `new mode` in the header.
+- **No difference.** A path that exists (in `HEAD` or in the working tree) but does not differ gives
+  `{ kind: "text", diff: "" }`. So does a rename, or a change of mode, without a changed line, with
+  the header and no hunk in `diff`. The client says that nothing in the file's lines changed.
+- **Binary.** When git prints `Binary files … differ` in place of hunks, the result is
+  `{ kind: "binary", old_size, new_size }`: the size in bytes of the file in `HEAD`
+  (`git cat-file -s HEAD:<old_path or path>`) and of the file in the working tree, each `null` when
+  that side does not exist or the agent did not measure it.
+- **Too large.** A diff longer than 1 MiB (1,048,576 bytes of standard output) gives
+  `{ kind: "too_large", limit: 1048576 }` and no text. The client shows the file's `additions` and
+  `deletions` from `git.status` instead.
+- Errors: `not_found` when `path` is neither in `HEAD` nor in the working tree, `failed` with a
+  sentence when `path` is a directory, `git_failed` with git's output when git fails.
+
+#### `git.commit`
+
+- Runs `git add -A` and then `git commit -F -` with `message` on standard input, in the repository's
+  root: everything is staged, and one commit is made of it. `message` is passed exactly as given
+  (git's default clean-up for a message that is not edited then drops leading and trailing blank
+  lines and trailing spaces, and keeps lines that start with `#`). Hooks run as they do on the Mac.
+- `message` is a string that is not empty once trimmed, of at most 64 KiB (65,536 bytes) in UTF-8;
+  anything else fails with `bad_request`. The client refuses an empty message before sending.
+- With an unfinished merge the same two commands conclude it, with the files as they are, conflict
+  markers included; the client warns before it sends that. The agent does nothing special for the
+  other values of `operation`.
+- Result: `commit` is the full id of the new commit (`git rev-parse HEAD`), `output` is git's output
+  of both commands, and `repo` is the repository afterwards.
+- When either command exits with a status other than 0 the answer is `git_failed` with git's output
+  of both. That includes "nothing to commit", a hook that refuses, and a missing `user.name`.
+- A commit never pushes. A client that offers "commit and push" sends `git.push` after `git.commit`
+  has succeeded.
+
+#### `git.push`
+
+- With an upstream (`upstream` is not `null`), or with `HEAD` detached: `git push`. Git decides what
+  that means from the owner's configuration, and says so when it refuses, which it does for a
+  detached `HEAD`.
+- Without one (`branch` is not `null` and `upstream` is `null`) the branch is published:
+  `git push --set-upstream <remote> <branch>`, where `<remote>` is `origin` when the repository has
+  a remote of that name and otherwise the first remote `git remote` lists. A repository with no
+  remote at all fails with `failed` and a sentence that says so. `published` is `true` when the push
+  was run this way, and `false` otherwise.
+- Never with `--force` in any form, and never a second attempt: a rejected push is answered as
+  rejected.
+- Result: git's `output` (which git writes to standard error even when it succeeds) and the
+  repository afterwards, with its new `upstream`, `ahead` and `behind`. A push that had nothing to
+  send succeeds with git's `Everything up-to-date`.
+- A status other than 0 is `git_failed` with git's output: a rejected push, no route to the remote,
+  authentication refused.
+
+#### `git.pull`
+
+- Runs `git pull --no-edit`. Whether that merges or rebases is the owner's configuration, and when
+  git refuses for want of one (`Need to specify how to reconcile divergent branches`), or because
+  the branch tracks nothing, that is the answer.
+- Result: git's `output` and the repository afterwards.
+- A status other than 0 is `git_failed` with git's output. The agent leaves the repository as git
+  left it: after a pull that stopped at conflicts the merge is unfinished (`operation: "merge"`),
+  the files in conflict are `conflicted`, and nothing is aborted or resolved for the owner. The same
+  holds for a pull that git refused because it would overwrite local changes, where nothing has
+  changed.
+
+#### `git.discard`
+
+Throws changes away for good. The client asks the owner first, naming what will be lost; the agent
+does not ask again.
+
+- **Without `path`**, every change in the repository: `git reset --hard HEAD`, then `git clean -fd`.
+  Tracked files go back to `HEAD`, files that were added but never committed and untracked files
+  and directories are deleted, and an unfinished merge is abandoned. Ignored files stay (no `-x`),
+  and so does a repository nested in an untracked directory, which `git clean` skips. In a
+  repository without a commit this fails with `failed`: there is nothing to go back to.
+- **With `path`**, that one file, by its `status`:
+  - `untracked`: `git clean -f -- <path>`, which deletes the file.
+  - every other status: `git restore --source=HEAD --staged --worktree -- [<old_path>] <path>`,
+    with `old_path` named for a renamed file. That puts back a modified or deleted file, removes an
+    added one (from the index and from disk), undoes a rename (the old file back, the new one gone)
+    and gives a file in conflict its content from `HEAD`.
+  - a `path` that does not differ from `HEAD` (any more) is not an error: nothing is done and the
+    result is the repository as it is.
+- Result: the repository afterwards. A status other than 0 is `git_failed` with git's output.
+
+#### Operations that take long
+
+`git.commit` (hooks), `git.push` and `git.pull` (the network), and `git.discard` can outlast the 20
+seconds the relay gives a request. For these four the client sends `timeout_ms: 300000` (see
+[Frames](#frames)), and the agent simply answers when git has finished: no progress, no second
+frame. The agent, for its part, does not let git run for ever: a command of these four that is
+still running after 240 seconds is stopped, and the answer is `git_failed` with what git printed up
+to then and a last line saying that it was stopped. So the agent always answers before the relay
+gives up.
+
+If the client's connection drops in the meantime, the relay forgets the request and the answer is
+lost, while the command runs on to its end on the Mac. The client then reads the outcome from the
+repository itself (`ahead`, `behind`, `changed`, `operation`) the next time it lists. It never
+sends a command again by itself.
+
+#### Event `git.changed`
+
+`{ repo }`, sent to all clients. `repo` is the `path` of a repository whose `Repo` or files may
+differ from what the agent last answered; `null`, or a missing `repo`, means that any of them may,
+or that the set of repositories itself changed. The client reads again whatever it is showing: the
+list, that repository's files, an open diff.
+
+The event is optional. An agent that sends it does so at most once a second per repository, after
+each `git.commit`, `git.push`, `git.pull` and `git.discard` (failed ones included, since a failed
+pull changes files too), and, if it watches the working trees, when something changed them from
+outside. A client must not depend on it: it also reads again when the screen is opened, when the
+owner asks, after each of its own commands, and when the page comes back to the foreground.
+
+#### Errors
+
+The source control methods add these codes to the ones under [Frames](#frames):
+
+| Code | Meaning |
+|---|---|
+| `git_failed` | Git ran and exited with a status other than 0, or was stopped. `message` is git's output as defined above, several lines of it, which the client shows as it is. |
+| `busy` | Another `git.commit`, `git.push`, `git.pull` or `git.discard` is still running in this repository. |
+| `not_found` | `repo` is not a working tree the agent lists, or `path` (for `git.diff`) names nothing. |
+| `bad_request` | A malformed `repo` or `path`, or an empty or oversized `message`. |
+| `failed` | The agent could not do it and git was not the one to say why. `message` is a sentence for the owner. |
+
+A client that does not know a code treats it as `failed`. An agent without these methods answers
+`not_supported`, as for any unknown method, and the client tells the owner to update Hako on the
+Mac.
 
 ### Notifications (sprint 6)
 
