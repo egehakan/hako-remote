@@ -9,3 +9,16 @@ export function useConnection(): ConnectionSnapshot {
 export function useWorkspace(): WorkspaceSnapshot {
   return useSyncExternalStore(workspaceStore.subscribe, workspaceStore.getSnapshot);
 }
+
+const WIDE = "(min-width: 48rem) and (min-height: 30rem)";
+
+function subscribeWide(listener: () => void): () => void {
+  const query = window.matchMedia(WIDE);
+  query.addEventListener("change", listener);
+  return () => query.removeEventListener("change", listener);
+}
+
+/** True where a list and a detail view fit side by side: the `wide` variant of the stylesheet. */
+export function useWide(): boolean {
+  return useSyncExternalStore(subscribeWide, () => window.matchMedia(WIDE).matches);
+}

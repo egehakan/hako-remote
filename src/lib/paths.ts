@@ -1,7 +1,17 @@
 const HOME = /^\/(?:Users|home)\/[^/]+/;
 
+let home: string | null = null;
+
+/** Tells `tildify` where the Mac's home directory really is, once the Mac has said so. */
+export function setHomeDirectory(path: string | null): void {
+  home = path;
+}
+
 /** Shows a home directory as `~`, the way a shell prompt does. */
 export function tildify(path: string): string {
+  if (home !== null && home !== "/" && (path === home || path.startsWith(`${home}/`))) {
+    return `~${path.slice(home.length)}`;
+  }
   return path.replace(HOME, "~");
 }
 
