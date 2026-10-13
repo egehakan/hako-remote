@@ -179,27 +179,104 @@ Event `workspace.changed` (`{}`) is sent, at most twice a second, whenever the r
 | `term.release_size` | req | `{ session_id }` | `{}` |
 | `theme.get` | req | | `{ terminal: { background, foreground, cursor, selection, ansi: string[16] }, font_family, font_size }` |
 
-- `snapshot` is base64 of bytes that, written to an empty terminal of `cols` x `rows`, reproduce the
-  current screen and recent scrollback. Output frames with `seq` at or after the returned `seq` follow.
+`term.subscribe`, `term.resize` and `term.release_size` fail with `not_found` for a `session_id` the
+Mac does not know. `term.unsubscribe` answers `{}` whether or not the session still exists.
+
+#### Subscribing and the stream
+
+- The session's output is one stream of bytes, exactly as the PTY produced them. `seq` numbers its
+  bytes: every output frame carries the offset of its first byte, frames are sent in order, and each
+  starts where the one before ended (`seq` of a frame = `seq` + payload length of the previous one).
+  The counter never goes back while the session lives. It may start anywhere, and it stays below
+  2^53, because the client holds it in a JavaScript number.
+- `term.subscribe` answers with the size the terminal has now (`cols`, `rows`), a `snapshot`, and
+  the `seq` of the first byte the snapshot does not cover. Output frames with that `seq` and later
+  follow. The agent sends the response before the first of those frames; the desktop app keeps
+  responses and output in one ordered queue.
 - `term.subscribe` is safe to repeat. The relay keeps the set of subscribed clients per session,
   delivers output frames only to them, and sends `term.unsubscribe` to the agent when the last one
   leaves or disconnects. A client counts as subscribed from the moment the agent answers its
-  `term.subscribe` with success, so the agent must send that response before the first output frame
-  it covers. Every `term.subscribe` is forwarded, because each client needs its own snapshot; a
-  `term.unsubscribe` is forwarded only for the last subscriber, and the others get `{}` from the relay.
+  `term.subscribe` with success. Every `term.subscribe` is forwarded, because each client needs its
+  own snapshot; a `term.unsubscribe` is forwarded only for the last subscriber, and the others get
+  `{}` from the relay.
 - To the agent a session is either streaming or not: it starts on `term.subscribe` and stops on
   `term.unsubscribe`, which may arrive with a `relay:` id. If the relay receives output for a session
   nobody is subscribed to, it sends `term.unsubscribe` for it. When the agent connection drops, the
   relay forgets every subscription; clients subscribe again once `agent.status` says `online: true`.
-- `term.unsubscribe` also gives the size back to the Mac, as `term.release_size` does, so a phone that
-  goes away does not leave the terminal at phone size.
-- `data` in `term.input` is the text or escape sequence to write to the PTY, exactly as a terminal
-  emulator would send it.
-- `term.resize` is the "fit to phone" switch. `term.release_size` gives the size back to the Mac.
-  Event `term.size` (`{ session_id, cols, rows }`) is sent to subscribers when the size changes.
+- The client subscribes when a terminal is opened, again whenever a frame does not start at the
+  offset it expects (a gap), again when the page comes back to the foreground, and again after a
+  reconnect. Each time it throws its screen away and draws the new snapshot. It sends
+  `term.unsubscribe` when the terminal is left.
 - Event `term.closed` (`{ session_id }`) is sent when the session ends, and ends its subscriptions.
+  The client shows the terminal as ended and does not subscribe to that id again.
 - The relay delivers an event whose name starts with `term.` and whose data has a `session_id` only
   to that session's subscribers. Every other event goes to all clients.
+
+#### The snapshot
+
+`snapshot` is base64 of bytes. The client resets its own terminal emulator (it writes `CAN` and
+`ESC c` itself), sizes it to `cols` x `rows`, and writes the snapshot bytes, then the output frames.
+What the snapshot must achieve:
+
+- **The screen**: afterwards the emulator shows what the Mac's terminal shows: the visible rows with
+  their colours and attributes, and the cursor in its place.
+- **History**: recent scrollback comes first, oldest line first, so that it scrolls off the top as
+  the screen is drawn. The client keeps 5,000 lines; a few thousand are plenty. Lines end with
+  `CR LF`. A line that the Mac's terminal wrapped is written without a line break, so that it wraps
+  again by itself.
+- **Modes**: every mode that is set on the Mac's terminal and differs from a freshly reset one is
+  set by the snapshot. The client encodes input from its own emulator's state, so two of them decide
+  what it sends: application cursor keys (`CSI ? 1 h`, which turns arrow keys into `ESC O A`) and
+  bracketed paste (`CSI ? 2004 h`). The others decide how later output is drawn: the alternate
+  screen (`CSI ? 1049 h`, entered before its contents are drawn, with the normal screen's contents
+  and history written first), cursor visibility, the scroll region, origin and auto-wrap mode, the
+  character sets, and the colours and attributes in effect at the cursor.
+- **A clean boundary**: the bytes from `seq` on must parse correctly after the snapshot. If the
+  Mac's terminal is in the middle of an escape sequence or of a multi-byte character at `seq`, the
+  snapshot ends with the bytes of that unfinished piece.
+- A replay of raw recent output satisfies all of this only if it starts at a point where the
+  terminal was in its reset state. The mock agent replays what it has, which is good enough to
+  develop against; the desktop app is expected to serialise its emulator's state instead.
+- With base64 the snapshot must stay well under the 8 MB frame limit.
+
+The client never answers what a program asks the terminal (device attributes, cursor position
+reports, colour queries, focus events): the Mac's terminal answers those, and a second answer would
+arrive as stray input. Neither the snapshot nor the stream needs to hide such requests.
+
+#### Input
+
+- `data` in `term.input` is text to write to the PTY, as UTF-8, exactly as a terminal emulator would
+  send it: typed characters, control codes, and escape sequences for keys. The agent does not
+  interpret it. Enter is `CR`. Pasted text has its line breaks turned into `CR` and, when the
+  program asked for bracketed paste, is wrapped in `ESC [ 200 ~` and `ESC [ 201 ~`.
+- Input for a session that is not known, or has ended, is dropped.
+
+#### Size
+
+- A terminal has one size, shared by the Mac's window and every client. A client that does not ask
+  for anything draws the terminal at the size it has and scales it to fit.
+- `term.resize` is the "fit to phone" switch: it resizes the terminal (and its PTY) to `cols` x
+  `rows`, both whole numbers of at least 2, and answers with the size the terminal really has
+  afterwards, which the client then uses. The last request wins.
+- `term.release_size` gives the size back to the Mac, which returns the terminal to the size its
+  window gives it. `term.unsubscribe` does the same, and so does losing the relay connection, so a
+  phone that goes away does not leave the terminal at phone size.
+- Event `term.size` (`{ session_id, cols, rows }`) is sent to the session's subscribers whenever the
+  size changes for any reason, including to the client that asked for the change and when the Mac's
+  own window is resized. It is sent in order with the output: bytes sent before it were laid out
+  for the old size, bytes after it for the new one.
+- The client sends `term.resize` after subscribing while "fit to phone" is on, again when its own
+  screen changes (rotation, the on-screen keyboard), and after a reconnect. It sends
+  `term.release_size` when the switch is turned off and before the `term.unsubscribe` of leaving.
+
+#### Theme
+
+- The colours are `#RRGGBB` (`#RRGGBBAA` is accepted). `ansi` is the 16 colours in the usual order:
+  black, red, green, yellow, blue, magenta, cyan, white, then the bright eight in the same order.
+- `font_family` is one family name and `font_size` is in points as the Mac's settings show it. The
+  client uses the family when the device has it, and its own monospace font otherwise.
+- The client asks once each time the Mac comes online. With `not_supported` it uses a neutral dark
+  scheme.
 
 ### Files (sprint 4)
 
