@@ -104,7 +104,7 @@ export function Shell({ email, onLoggedOut }: ShellProps) {
 
   return (
     <WorkspaceActionsContext value={actions}>
-      <div className="h-dvh narrow:flex narrow:flex-col wide:grid wide:grid-cols-[auto_minmax(18rem,24rem)_minmax(0,1fr)]">
+      <div className="h-full narrow:flex narrow:flex-col wide:grid wide:grid-cols-[auto_minmax(18rem,24rem)_minmax(0,1fr)] wide:grid-rows-[minmax(0,1fr)]">
         <PrimaryNav
           area={area}
           resume={resume.current}
@@ -114,7 +114,7 @@ export function Shell({ email, onLoggedOut }: ShellProps) {
           <>
             <div
               className={cn(
-                "flex min-h-0 flex-col narrow:flex-1 wide:h-dvh",
+                "flex min-h-0 flex-col narrow:flex-1",
                 route.name !== "workspace" && "narrow:hidden",
               )}
             >
@@ -149,7 +149,7 @@ export function Shell({ email, onLoggedOut }: ShellProps) {
                   <WorkspaceSkeleton />
                 )}
               </main>
-              <footer className="shrink-0 border-t bg-background px-safe py-3">
+              <footer className="shrink-0 border-t bg-background px-safe py-3 wide:pb-[max(0.75rem,env(safe-area-inset-bottom))]">
                 <Button
                   size="touch"
                   className="w-full"
@@ -171,7 +171,7 @@ export function Shell({ email, onLoggedOut }: ShellProps) {
                 "wide:border-l",
                 // On a phone the terminal follows the visible part of the page, above the keyboard.
                 openSessionId === null
-                  ? "min-h-0 overflow-y-auto overscroll-contain narrow:flex-1 wide:h-dvh"
+                  ? "min-h-0 overflow-y-auto overscroll-contain narrow:flex-1"
                   : "h-(--vv-height) overflow-hidden narrow:fixed narrow:inset-x-0 narrow:top-(--vv-top)",
                 route.name === "workspace" && "narrow:hidden",
               )}
@@ -192,7 +192,7 @@ export function Shell({ email, onLoggedOut }: ShellProps) {
         ) : route.name === "files" || route.name === "dir" || route.name === "file" ? (
           <FilesArea route={route} />
         ) : (
-          <div className="min-h-0 overflow-y-auto overscroll-contain narrow:flex-1 wide:col-span-2 wide:h-dvh wide:border-l">
+          <div className="min-h-0 overflow-y-auto overscroll-contain narrow:flex-1 wide:col-span-2 wide:border-l">
             {area === "git" ? (
               <SourceControlScreen />
             ) : (

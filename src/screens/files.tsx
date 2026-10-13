@@ -35,7 +35,7 @@ export function FilesArea({ route }: { route: FilesRoute }) {
     <>
       <div
         className={cn(
-          "flex min-h-0 min-w-0 flex-col narrow:flex-1 wide:h-dvh",
+          "flex min-h-0 min-w-0 flex-col narrow:flex-1",
           routeFile !== null && "narrow:hidden",
         )}
       >
@@ -43,11 +43,11 @@ export function FilesArea({ route }: { route: FilesRoute }) {
       </div>
       <div
         className={cn(
-          "min-w-0 wide:border-l",
+          "min-h-0 min-w-0 wide:border-l",
           // On a phone an open file follows the visible part of the page, above the keyboard.
           shown !== null
             ? "h-(--vv-height) overflow-hidden narrow:fixed narrow:inset-x-0 narrow:top-(--vv-top)"
-            : "narrow:hidden wide:h-dvh",
+            : "min-h-0 narrow:hidden",
         )}
       >
         {shown !== null ? (

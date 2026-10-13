@@ -57,55 +57,57 @@ export function LoginScreen({ onLoggedIn }: { onLoggedIn: (email: string) => voi
   const badCredentials = error?.kind === "invalid_credentials";
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-sm flex-col justify-center gap-10 px-safe pt-[max(2rem,env(safe-area-inset-top))] pb-[max(2rem,env(safe-area-inset-bottom))]">
-      <div className="flex items-end gap-4">
-        <BoxMark className="h-16" />
-        <div className="pb-0.5">
-          <h1 className="text-4xl leading-none font-semibold tracking-[-0.03em]">Hako</h1>
-          <p className="mt-2 text-sm text-muted-foreground">Your Mac’s terminal, from here.</p>
+    <main className="h-full overflow-y-auto overscroll-contain">
+      <div className="mx-auto flex min-h-full w-full max-w-sm flex-col justify-center gap-10 px-safe pt-[max(2rem,env(safe-area-inset-top))] pb-[max(2rem,env(safe-area-inset-bottom))]">
+        <div className="flex items-end gap-4">
+          <BoxMark className="h-16" />
+          <div className="pb-0.5">
+            <h1 className="text-4xl leading-none font-semibold tracking-[-0.03em]">Hako</h1>
+            <p className="mt-2 text-sm text-muted-foreground">Your Mac’s terminal, from here.</p>
+          </div>
         </div>
-      </div>
 
-      <form onSubmit={logIn}>
-        <FieldGroup>
-          <Field>
-            <FieldLabel htmlFor="email">Email</FieldLabel>
-            <Input
-              id="email"
-              name="email"
-              type="email"
-              inputMode="email"
-              autoComplete="username"
-              autoCapitalize="none"
-              autoCorrect="off"
-              spellCheck={false}
-              required
-              aria-invalid={badCredentials || undefined}
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="password">Password</FieldLabel>
-            <Input
-              id="password"
-              name="password"
-              type="password"
-              autoComplete="current-password"
-              required
-              aria-invalid={badCredentials || undefined}
-            />
-          </Field>
-          {problem ? (
-            <Alert variant="destructive">
-              <AlertTitle>{problem.title}</AlertTitle>
-              <AlertDescription>{problem.detail}</AlertDescription>
-            </Alert>
-          ) : null}
-          <Button type="submit" size="touch" disabled={busy}>
-            {busy ? <Spinner data-icon="inline-start" /> : null}
-            Log in
-          </Button>
-        </FieldGroup>
-      </form>
+        <form onSubmit={logIn}>
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor="email">Email</FieldLabel>
+              <Input
+                id="email"
+                name="email"
+                type="email"
+                inputMode="email"
+                autoComplete="username"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                required
+                aria-invalid={badCredentials || undefined}
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="password">Password</FieldLabel>
+              <Input
+                id="password"
+                name="password"
+                type="password"
+                autoComplete="current-password"
+                required
+                aria-invalid={badCredentials || undefined}
+              />
+            </Field>
+            {problem ? (
+              <Alert variant="destructive">
+                <AlertTitle>{problem.title}</AlertTitle>
+                <AlertDescription>{problem.detail}</AlertDescription>
+              </Alert>
+            ) : null}
+            <Button type="submit" size="touch" disabled={busy}>
+              {busy ? <Spinner data-icon="inline-start" /> : null}
+              Log in
+            </Button>
+          </FieldGroup>
+        </form>
+      </div>
     </main>
   );
 }

@@ -43,7 +43,7 @@ export function PrimaryNav({ area, resume, hiddenOnPhone }: PrimaryNavProps) {
       aria-label="Areas"
       className={cn(
         "shrink-0 bg-background narrow:order-last narrow:grid narrow:grid-cols-4 narrow:border-t narrow:pr-[env(safe-area-inset-right)] narrow:pb-[env(safe-area-inset-bottom)] narrow:pl-[env(safe-area-inset-left)]",
-        "wide:flex wide:h-dvh wide:w-[4.75rem] wide:flex-col wide:items-stretch wide:gap-1 wide:border-r wide:px-1.5 wide:pt-3 wide:pb-3",
+        "wide:flex wide:min-h-0 wide:w-[4.75rem] wide:flex-col wide:items-stretch wide:gap-1 wide:border-r wide:px-1.5 wide:pt-[max(0.75rem,env(safe-area-inset-top))] wide:pb-[max(0.75rem,env(safe-area-inset-bottom))]",
         hiddenOnPhone && "narrow:hidden",
       )}
     >

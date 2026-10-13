@@ -106,7 +106,7 @@
 
   /* The visible part of the page. The terminal screen keeps these current while it is open, so
      that an on-screen keyboard, which covers the page without resizing it, does not hide its keys. */
-  --vv-height: 100dvh;
+  --vv-height: 100%;
   --vv-top: 0px;
 
   color-scheme: dark;
@@ -117,6 +117,21 @@
     @apply border-border outline-ring/50;
   }
 
+  /* The document itself never scrolls: the app fills the screen from a fixed root and only its
+     panes scroll. A phone's browser resizes the viewport as its toolbars come and go, and a page
+     sized in viewport units can be left a strip short until the next scroll. */
+  html,
+  body {
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  #root {
+    position: fixed;
+    inset: 0;
+  }
+
   html {
     @apply bg-background font-sans;
     -webkit-text-size-adjust: 100%;
@@ -124,15 +139,8 @@
     touch-action: manipulation;
   }
 
-  @media (pointer: fine) {
-    html {
-      overscroll-behavior: none;
-    }
-  }
-
   body {
     @apply bg-background text-foreground antialiased;
-    min-height: 100dvh;
   }
 
   button:not(:disabled),

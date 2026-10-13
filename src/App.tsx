@@ -45,7 +45,7 @@ export function App() {
   if (auth.state === "checking") {
     return (
       <div
-        className="flex min-h-dvh items-center justify-center"
+        className="flex h-full items-center justify-center"
         aria-busy="true"
         aria-label="Loading…"
       >
