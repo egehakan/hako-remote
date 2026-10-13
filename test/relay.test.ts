@@ -326,3 +326,17 @@ test("the time a request asks for is kept within the relay's limits", () => {
   assert.equal(requestTimeout(-1, 20_000), 1_000);
   assert.equal(requestTimeout(86_400_000, 20_000), 600_000);
 });
+
+test("a notify event goes to whoever decides about notifications, not straight to clients", () => {
+  const taken: unknown[] = [];
+  const { relay, agent, connect } = setup({ onNotify: (data: unknown) => taken.push(data) });
+  const { socket } = connect();
+  const before = socket.json.length;
+  const data = { kind: "agent_done", title: "Done", body: "", session_id: "s1", tab_id: "t1" };
+  relay.handleAgentMessage(agent, JSON.stringify({ t: "evt", event: "notify", data }));
+  assert.deepEqual(taken, [data]);
+  assert.equal(socket.json.length, before);
+
+  relay.sendEvent("notify", data);
+  assert.deepEqual(socket.last(), { t: "evt", event: "notify", data });
+});

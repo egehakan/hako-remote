@@ -21,6 +21,11 @@ export type RelayOptions = {
   requestTimeoutMs?: number;
   /** How long to wait for the agent's `app.info` before announcing it without a name. */
   infoTimeoutMs?: number;
+  /**
+   * Takes the data of every `notify` event in place of the fan-out to clients, so that whoever
+   * decides which notifications go out also decides which ones clients see (`sendEvent`).
+   */
+  onNotify?: (data: unknown) => void;
   log?: (message: string) => void;
 };
 
@@ -101,6 +106,7 @@ export class Relay {
   private readonly requestTimeoutMs: number;
   private readonly infoTimeoutMs: number;
   private readonly log: (message: string) => void;
+  private readonly onNotify: ((data: unknown) => void) | null;
   private readonly clients = new Map<string, Client>();
   private readonly pending = new Map<string, Pending>();
   private readonly subscribers = new Map<string, Set<Client>>();
@@ -114,6 +120,7 @@ export class Relay {
     this.requestTimeoutMs = options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
     this.infoTimeoutMs = options.infoTimeoutMs ?? INFO_TIMEOUT_MS;
     this.log = options.log ?? (() => {});
+    this.onNotify = options.onNotify ?? null;
   }
 
   get clientCount(): number {
@@ -201,6 +208,11 @@ export class Relay {
     for (const sessionId of client.terminals) {
       if (this.unsubscribe(client, sessionId)) this.tellAgentToStop(sessionId);
     }
+  }
+
+  /** Sends an event of the relay's own to every client. */
+  sendEvent(event: string, data: unknown): void {
+    this.broadcast({ t: "evt", event, data });
   }
 
   /** Closes every client connection that belongs to one of the given sessions. */
@@ -318,6 +330,14 @@ export class Relay {
 
   private handleAgentEvent(frame: Record<string, unknown>): void {
     if (typeof frame.event !== "string") return;
+    if (frame.event === "notify" && this.onNotify) {
+      try {
+        this.onNotify(frame.data);
+      } catch (error) {
+        this.log(`notify failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      return;
+    }
     const event: EventFrame = { t: "evt", event: frame.event, data: frame.data ?? {} };
     const sessionId = frame.event.startsWith("term.") ? sessionIdOf(frame.data) : null;
     if (sessionId === null) {
