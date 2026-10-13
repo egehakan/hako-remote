@@ -11,7 +11,18 @@ export const CLOSE_REPLACED = 4001;
 export const CLOSE_SESSION_ENDED = 4401;
 
 export type ErrorCode =
-  "agent_offline" | "timeout" | "bad_request" | "not_found" | "not_supported" | "failed";
+  | "agent_offline"
+  | "timeout"
+  | "bad_request"
+  | "not_found"
+  | "not_supported"
+  | "failed"
+  // The file methods' own.
+  | "not_a_directory"
+  | "is_a_directory"
+  | "permission_denied"
+  | "conflict"
+  | "too_large";
 
 export type RpcError = { code: ErrorCode; message: string };
 
@@ -88,3 +99,26 @@ export type TerminalTheme = {
   font_family: string;
   font_size: number;
 };
+
+export type FsRoot = { path: string; name: string; source: "folder" | "terminal" | "home" };
+
+export type FsEntry = {
+  name: string;
+  kind: "dir" | "file" | "symlink" | "other";
+  /** What a symlink points to, or null when it points nowhere. Null for every other kind. */
+  target: "dir" | "file" | "other" | null;
+  size: number;
+  mtime: number;
+};
+
+export type FsRootsResult = { home: string; roots: FsRoot[] };
+export type FsListResult = { entries: FsEntry[]; truncated: boolean };
+
+export type FsReadResult =
+  | { kind: "text"; content: string; mtime: number; size: number }
+  | { kind: "image"; mime: string; data: string; mtime: number; size: number }
+  | { kind: "binary"; size: number }
+  | { kind: "too_large"; size: number; limit: number };
+
+export type FsWriteParams = { path: string; content: string; expected_mtime: number | null };
+export type FsWriteResult = { mtime: number; size: number };

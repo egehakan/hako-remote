@@ -100,7 +100,8 @@ agent drops fail the same way. Notifications sent while the agent is offline are
 The relay also sends the agent requests of its own. Their ids start with `relay:` and the agent
 answers them like any other request.
 
-Error codes: `agent_offline`, `timeout`, `bad_request`, `not_found`, `not_supported`, `failed`.
+Error codes: `agent_offline`, `timeout`, `bad_request`, `not_found`, `not_supported`, `failed`. The file
+methods add a few of their own, listed under [Files](#files-sprint-4).
 
 ### Terminal output frame (binary, agent -> relay -> subscribed clients)
 
@@ -289,12 +290,177 @@ arrive as stray input. Neither the snapshot nor the stream needs to hide such re
 
 | Method | Params | Result |
 |---|---|---|
-| `fs.roots` | | `{ roots: { path, name }[] }`: the folder directories and terminal working directories |
-| `fs.list` | `{ path }` | `{ entries: { name, kind: "dir" \| "file" \| "symlink", size, mtime }[] }`, directories first |
-| `fs.read` | `{ path }` | `{ kind: "text", content, mtime, size }`, or `{ kind: "binary" \| "too_large", size }` (text limit 2 MB) |
-| `fs.write` | `{ path, content, expected_mtime }` | `{ mtime }`, or error `failed` when the file changed since it was read |
+| `fs.roots` | | `{ home, roots: Root[] }` |
+| `fs.list` | `{ path }` | `{ entries: Entry[], truncated }` |
+| `fs.read` | `{ path }` | `ReadResult` |
+| `fs.write` | `{ path, content, expected_mtime }` | `{ mtime, size }` |
 
-Paths are absolute.
+```ts
+type Root = { path: string; name: string; source: "folder" | "terminal" | "home" };
+type Entry = {
+  name: string;
+  kind: "dir" | "file" | "symlink" | "other";
+  target: "dir" | "file" | "other" | null;   // symlinks only, otherwise null
+  size: number;
+  mtime: number;
+};
+type ReadResult =
+  | { kind: "text"; content: string; mtime: number; size: number }
+  | { kind: "image"; mime: string; data: string; mtime: number; size: number }
+  | { kind: "binary"; size: number }
+  | { kind: "too_large"; size: number; limit: number };
+```
+
+These methods read and change files on the Mac as the user Hako runs as. They are not confined to
+the roots: any path that user can reach is served, since the same client already has a shell. This
+version reads directories and files and rewrites existing files. It does not create, rename, move or
+delete anything, and it sends no event when a file changes on the Mac: the client asks again.
+
+#### Paths
+
+- A path is a string holding an absolute POSIX path. It starts with `/`, its segments are separated
+  by single `/`, none of them is empty, `.` or `..`, and it does not end with `/`. The one exception
+  is the root directory, which is `/` itself. Every other form, including `~`, `~/x`, `a/b`, `/a//b`,
+  `/a/` and `/a/../b`, fails with `bad_request`, and so does a `path` that is missing or not a
+  string. The agent expands nothing: no `~`, no environment variables.
+- The client builds a path only by joining a path the agent gave it (a root's `path`, or a `cwd` or
+  `directory` from the workspace) with entry names: `parent + "/" + name`, or `"/" + name` under the
+  root directory. Names are passed back byte for byte; neither side changes their Unicode
+  normalisation or their case.
+- Symbolic links are followed, as the operating system follows them: `fs.list` of a link to a
+  directory lists that directory, and `fs.read` and `fs.write` of a link act on the file it points
+  to (the link itself stays a link). Paths are not made canonical, so a path that runs through a
+  link is as good as any other. A link that points nowhere fails with `not_found`.
+- A file or directory whose name is not valid UTF-8 cannot be named in JSON and is left out of
+  listings.
+
+#### Sizes and times
+
+- `size` is the length in bytes. For a directory it is `0`.
+- `mtime` is the time of the last modification in whole milliseconds since the Unix epoch (UTC), an
+  integer. The agent takes the file system's time and drops everything below a millisecond (it
+  rounds down), the same way in `fs.list`, `fs.read` and `fs.write`, so that two values for the same
+  unchanged file are always equal.
+- For a symlink, `size` and `mtime` describe what it points to. A link that points nowhere has
+  `target: null`, `size: 0`, and the `mtime` of the link itself.
+
+#### `fs.roots`
+
+`home` is the user's home directory, always present; the client uses it to show paths as `~/…`.
+`roots` are the places browsing starts from, in this order:
+
+1. Each folder's `directory`, in the order of `workspace.list` (window by window, then folder by
+   folder), with `name` equal to the folder's `name` and `source: "folder"`.
+2. The home directory, with `name: "Home"` and `source: "home"`.
+3. The `cwd` of each terminal pane, in the order of `workspace.list` (window, tab, pane), with
+   `name` equal to the last segment of the path (`/` for the root directory) and
+   `source: "terminal"`.
+
+A path appears once: an item whose `path` equals an earlier one is dropped. So a home directory that
+is also an open folder is listed as that folder and not again as `"home"`, and a terminal sitting in
+a folder's directory or in the home directory adds nothing. Paths are compared as strings. A
+directory nested inside another root is still listed. Directories that no longer exist are listed
+all the same; `fs.list` then says `not_found`. Roots change only when `workspace.list` would, so the
+client reads them again after `workspace.changed`.
+
+#### `fs.list`
+
+- Lists one directory, without recursion, and with every entry, hidden ones (names starting with
+  `.`) included. `.` and `..` are never entries. The client decides what to hide.
+- `kind` is `dir` for a directory, `file` for a regular file, `symlink` for a symbolic link and
+  `other` for anything else (a socket, a FIFO, a device). For a symlink, `target` says what it
+  points to after following every link, or is `null` when it points nowhere or cannot be followed;
+  for the other kinds `target` is `null`. An entry the agent cannot examine is listed as `other`
+  with `size: 0` and `mtime: 0`.
+- Order: entries that are directories (`kind: "dir"`, or a symlink with `target: "dir"`) come first,
+  then all others. Inside each group entries are ordered by their name in lower case, compared code
+  point by code point, and two names that are equal in lower case by the names themselves, compared
+  the same way. The client may order them differently for display.
+- At most 20,000 entries are returned. `truncated` is `true` when the directory holds more, and the
+  entries are then the first 20,000 in the order above; otherwise it is `false`.
+- Errors: `not_found` when nothing is at `path`, `not_a_directory` when it is not a directory,
+  `permission_denied` when the Mac refuses to read it.
+
+#### `fs.read`
+
+The agent decides in this order what the file is:
+
+1. **Image.** The name ends, in any letter case, with one of these extensions:
+
+   | Extension | `mime` |
+   |---|---|
+   | `.png` | `image/png` |
+   | `.jpg`, `.jpeg` | `image/jpeg` |
+   | `.gif` | `image/gif` |
+   | `.webp` | `image/webp` |
+   | `.svg` | `image/svg+xml` |
+
+   The result is `{ kind: "image", mime, data, mtime, size }`, where `data` is the file's bytes in
+   base64 (the standard alphabet, with `=` padding, without line breaks). The limit is 5 MiB
+   (5,242,880 bytes): a larger image gives `{ kind: "too_large", size, limit: 5242880 }`. The agent
+   does not look inside the file; the extension alone decides, so an SVG file is always an image
+   here and never text. The client draws the image in an `<img>` element and never puts its
+   contents into the page as markup, so nothing inside an SVG runs.
+2. **Too large.** Any other file longer than 2 MiB (2,097,152 bytes) gives
+   `{ kind: "too_large", size, limit: 2097152 }`, without being read.
+3. **Binary.** A file that contains a NUL byte, or whose bytes are not valid UTF-8, gives
+   `{ kind: "binary", size }`. The agent never decodes with replacement characters, so a file the
+   client can show is a file it can write back unchanged.
+4. **Text.** Everything else gives `{ kind: "text", content, mtime, size }`. `content` is the whole
+   file decoded as UTF-8 and nothing else: line endings are left as they are (`LF`, `CR LF`, mixed),
+   and a byte order mark at the start stays in `content` as U+FEFF. An empty file is text with
+   `content: ""`.
+
+`size` is always the file's length in bytes, and `mtime` belongs to the bytes that were returned.
+A text result that would not fit in a frame once encoded (a file full of control characters grows
+in JSON) is answered as `too_large` with `limit: 2097152`.
+
+Errors: `not_found`, `is_a_directory` when `path` is a directory, `permission_denied`, and `failed`
+for anything that is neither a directory nor a regular file.
+
+#### `fs.write`
+
+- Replaces the whole contents of an existing regular file with `content`, a string, encoded as
+  UTF-8 exactly as given: the agent adds, removes and converts nothing (no final newline, no line
+  ending conversion, no byte order mark). The file keeps its permission bits.
+- **It never creates a file.** When nothing is at `path` the answer is `not_found`; a directory gives
+  `is_a_directory`.
+- `expected_mtime` is the `mtime` the client got from `fs.read` (or from its last `fs.write`), or
+  `null`. With a number, the agent compares it with the file's `mtime` now, computed as above. If
+  they differ in either direction the file has changed since the client read it: nothing is written
+  and the answer is the error `conflict`. With `null` the check is skipped, which is how the client
+  overwrites after the owner chose to. `expected_mtime` must be present; leaving it out is
+  `bad_request`.
+- `content` may be at most 2 MiB (2,097,152 bytes) once encoded; more fails with `too_large`.
+- The result is the file's new `mtime` and `size`, which the client uses as `expected_mtime` for its
+  next write.
+- A write that fails leaves the file as it was, whole: the agent writes a temporary file in the
+  same directory and renames it over the original, or does something of equal effect. Through a
+  symlink it replaces the file the link points to, not the link.
+- Errors: `bad_request`, `not_found`, `is_a_directory`, `permission_denied` (a read-only file, a
+  directory the user may not write to), `conflict`, `too_large`, and `failed` for any other trouble,
+  such as a full disk.
+
+#### Errors
+
+The file methods add these codes to the ones under [Frames](#frames):
+
+| Code | Meaning |
+|---|---|
+| `not_found` | Nothing exists at `path`, or a link on the way points nowhere. |
+| `not_a_directory` | `fs.list` of something that is not a directory. |
+| `is_a_directory` | `fs.read` or `fs.write` of a directory. |
+| `permission_denied` | The Mac refused: the operating system's `EACCES` or `EPERM`, or a macOS privacy rule. |
+| `conflict` | `fs.write` only: the file's `mtime` is not `expected_mtime`. |
+| `too_large` | `fs.write` only: `content` is over the limit. (`fs.read` reports a large file as a result, not as an error.) |
+| `bad_request` | A malformed path or a missing or mistyped parameter. |
+| `failed` | Anything else. |
+
+`message` is a sentence for the owner, which the client shows as it is for `permission_denied` and
+`failed`: say what the Mac said, for example "Permission denied: /Users/ege/Library/Mail". A client
+that does not know a code treats it as `failed`. An agent without these methods answers
+`not_supported`, as for any unknown method, and the client tells the owner to update Hako on the
+Mac.
 
 ### Source control (sprint 5)
 
