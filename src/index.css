@@ -106,7 +106,7 @@
 
   /* The visible part of the page. The terminal screen keeps these current while it is open, so
      that an on-screen keyboard, which covers the page without resizing it, does not hide its keys. */
-  --vv-height: 100%;
+  --vv-height: var(--app-height, 100%);
   --vv-top: 0px;
 
   color-scheme: dark;
@@ -127,9 +127,29 @@
     overscroll-behavior: none;
   }
 
+  /* `--app-height` is measured by src/lib/viewport.ts. In a browser tab the root is pinned to all
+     four edges, and the measurement only keeps it from being shorter than the screen. */
   #root {
     position: fixed;
     inset: 0;
+    min-height: var(--app-height, 0px);
+  }
+
+  /* Opened from the home screen there are no browser bars, so the large viewport is the whole
+     screen. An iPhone can start such an app with its other heights (the dynamic viewport, and
+     what a pinned element is measured against) short by the status bar, and corrects them only
+     after a scroll that this document never makes. */
+  @media (display-mode: standalone) {
+    #root {
+      bottom: auto;
+      height: var(--app-height, 100vh);
+    }
+
+    @supports (height: 100lvh) {
+      #root {
+        height: var(--app-height, 100lvh);
+      }
+    }
   }
 
   html {

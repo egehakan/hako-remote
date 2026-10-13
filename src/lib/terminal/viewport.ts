@@ -1,7 +1,5 @@
 import { useEffect, useState } from "react";
-
-/** A keyboard is taken to be open when it hides at least this much of the page, in CSS pixels. */
-const KEYBOARD_MIN_HEIGHT = 120;
+import { isKeyboardOpen, isWholeAppVisible } from "@/lib/viewport";
 
 /**
  * Follows the part of the page that is really visible. An on-screen keyboard slides over the page
@@ -18,12 +16,16 @@ export function useVisibleViewport(): boolean {
 
     const update = () => {
       frame = 0;
-      const height = viewport?.height ?? window.innerHeight;
-      root.style.setProperty("--vv-height", `${height}px`);
+      // With nothing over the page the screen is as tall as the app, whose height is measured with
+      // more care than the visual viewport reports it when the page has just appeared.
+      root.style.setProperty(
+        "--vv-height",
+        isWholeAppVisible()
+          ? "var(--app-height, 100%)"
+          : `${viewport?.height ?? window.innerHeight}px`,
+      );
       root.style.setProperty("--vv-top", `${viewport?.offsetTop ?? 0}px`);
-      // Pinch-zooming the page also shrinks the visible part; only an unzoomed gap is a keyboard.
-      const hidden = window.innerHeight - height * (viewport?.scale ?? 1);
-      setKeyboardOpen(hidden > KEYBOARD_MIN_HEIGHT);
+      setKeyboardOpen(isKeyboardOpen());
     };
     const schedule = () => {
       if (frame === 0) frame = requestAnimationFrame(update);
