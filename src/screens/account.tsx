@@ -2,6 +2,7 @@ import { CircleCheckIcon, LogOutIcon } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { DetailHeader } from "@/components/detail-header";
 import { DisplayDetails } from "@/components/display-details";
+import { NotificationSettings } from "@/components/notification-settings";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
@@ -9,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { api, describeWait } from "@/lib/api";
+import { notifications } from "@/lib/notifications";
 
 const MIN_PASSWORD_LENGTH = 10;
 
@@ -75,6 +77,8 @@ export function AccountScreen({ email, onLoggedOut }: { email: string; onLoggedO
 
   async function logOut() {
     setLoggingOut(true);
+    // While the session still stands, so the relay knows whose subscription to remove.
+    await notifications.forget();
     await api.logout();
     onLoggedOut();
   }
@@ -87,6 +91,10 @@ export function AccountScreen({ email, onLoggedOut }: { email: string; onLoggedO
           <p className="text-sm text-muted-foreground">Signed in as</p>
           <p className="font-medium break-all">{email}</p>
         </div>
+
+        <NotificationSettings />
+
+        <Separator />
 
         <form onSubmit={changePassword} noValidate>
           <FieldGroup>
