@@ -3,6 +3,7 @@ import { BoxMark } from "@/components/box-mark";
 import { api } from "@/lib/api";
 import { relay } from "@/lib/connection";
 import { clearFiles } from "@/lib/files/store";
+import { clearGit } from "@/lib/git/store";
 import { navigate, routes } from "@/lib/route";
 import { workspaceStore } from "@/lib/workspace";
 import { LoginScreen } from "@/screens/login";
@@ -17,6 +18,7 @@ export function App() {
     relay.stop();
     workspaceStore.clear();
     clearFiles();
+    clearGit();
     navigate(routes.workspace, { replace: true });
     setAuth({ state: "anonymous" });
   }, []);

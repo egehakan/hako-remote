@@ -21,7 +21,7 @@ import { cn } from "@/lib/utils";
 import { listTerminals } from "@/lib/workspace";
 import { AccountScreen } from "@/screens/account";
 import { FilesArea } from "@/screens/files";
-import { SourceControlScreen } from "@/screens/source-control";
+import { SourceControlArea } from "@/screens/source-control";
 import { TabDetail } from "@/screens/tab-detail";
 
 // The terminal brings xterm.js with it, which the login and the workspace list do not need.
@@ -108,7 +108,9 @@ export function Shell({ email, onLoggedOut }: ShellProps) {
         <PrimaryNav
           area={area}
           resume={resume.current}
-          hiddenOnPhone={route.name === "terminal" || route.name === "file"}
+          hiddenOnPhone={
+            route.name === "terminal" || route.name === "file" || route.name === "diff"
+          }
         />
         {area === "terminals" ? (
           <>
@@ -191,13 +193,11 @@ export function Shell({ email, onLoggedOut }: ShellProps) {
           </>
         ) : route.name === "files" || route.name === "dir" || route.name === "file" ? (
           <FilesArea route={route} />
+        ) : route.name === "git" || route.name === "repo" || route.name === "diff" ? (
+          <SourceControlArea route={route} />
         ) : (
           <div className="min-h-0 overflow-y-auto overscroll-contain narrow:flex-1 wide:col-span-2 wide:border-l">
-            {area === "git" ? (
-              <SourceControlScreen />
-            ) : (
-              <AccountScreen email={email} onLoggedOut={onLoggedOut} />
-            )}
+            <AccountScreen email={email} onLoggedOut={onLoggedOut} />
           </div>
         )}
       </div>
