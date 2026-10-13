@@ -5,10 +5,13 @@ import { spawnSync } from "node:child_process";
 import {
   accessSync,
   chmodSync,
+  closeSync,
   constants,
+  ftruncateSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readdirSync,
   readFileSync,
   realpathSync,
@@ -18,6 +21,7 @@ import {
   statSync,
   symlinkSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -30,6 +34,7 @@ import {
   LIST_LIMIT,
   TEXT_LIMIT_BYTES,
 } from "../shared/files.ts";
+import { TRANSFER_CHUNK_BYTES, TRANSFER_MAX_BYTES } from "../shared/transfers.ts";
 import type {
   ErrorCode,
   FsEntry,
@@ -573,12 +578,69 @@ export function createFixture(): string {
   write("Notes/todo.md", "# To do\n\n- [ ] Files on the phone\n- [x] Terminals on the phone\n");
   write("Notes/ideas.md", "# Ideas\n\nA box for every project.\n");
   mkdirSync(join(root, "Downloads"));
+  createTransferFixture(join(root, "Downloads"));
   return root;
+}
+
+/** A file of `size` bytes that takes no time to make: nothing but its last bytes is written. */
+function sparseFile(path: string, size: number): void {
+  const mark = Buffer.from("the end\n");
+  const file = openSync(path, "w");
+  try {
+    ftruncateSync(file, size);
+    writeSync(file, mark, 0, mark.length, size - mark.length);
+  } finally {
+    closeSync(file);
+  }
+}
+
+function patternedBytes(size: number, seed: number): Buffer {
+  const bytes = Buffer.alloc(size);
+  let state = seed;
+  for (let index = 0; index < size; index++) {
+    state = (state * 1103515245 + 12345) & 0x7fffffff;
+    bytes[index] = state >> 16;
+  }
+  return bytes;
+}
+
+const CHANGING_FILE = "changes-while-read.bin";
+const CHANGING_FILE_BYTES = 4 * TRANSFER_CHUNK_BYTES;
+
+/**
+ * What moving files needs to be tried against: files of several pieces, one at the limit and one
+ * over it, a name to collide with, and a folder nothing can be written into. They live outside
+ * the repositories of the fixture, where files of this size would slow git down.
+ */
+function createTransferFixture(directory: string): void {
+  writeFileSync(join(directory, "notes.txt"), "Upload another notes.txt here to be asked.\n");
+  writeFileSync(join(directory, "box.png"), png(300, 360, boxPixel));
+  writeFileSync(
+    join(directory, "five-megabytes.bin"),
+    patternedBytes(5 * TRANSFER_CHUNK_BYTES + 321, 11),
+  );
+  writeFileSync(join(directory, CHANGING_FILE), patternedBytes(CHANGING_FILE_BYTES, 23));
+  sparseFile(join(directory, "fifty-megabytes.bin"), TRANSFER_MAX_BYTES);
+  sparseFile(join(directory, "over-the-limit.bin"), TRANSFER_MAX_BYTES + 1);
+  mkdirSync(join(directory, "read-only-folder"));
+  chmodSync(join(directory, "read-only-folder"), 0o555);
+}
+
+/** Changes a file of several pieces behind the client's back, as a build on the Mac would. */
+export function rewriteChangingFile(root: string): string {
+  const file = join(root, "Downloads", CHANGING_FILE);
+  writeFileSync(file, patternedBytes(CHANGING_FILE_BYTES, Date.now() & 0xffff));
+  return file;
 }
 
 export function removeFixture(root: string): void {
   try {
     chmodSync(join(root, "Documents/GitHub/hako-remote/fixtures/no-entry"), 0o755);
+  } catch {
+    // Already gone.
+  }
+  try {
+    chmodSync(join(root, "Downloads/read-only-folder"), 0o755);
   } catch {
     // Already gone.
   }
@@ -599,7 +661,7 @@ export function rewriteConflictFile(root: string): string {
 
 // The methods
 
-function failure(error: unknown, path: string): FsFailure {
+export function failure(error: unknown, path: string): FsFailure {
   if (error instanceof FsFailure) return error;
   const code = (error as NodeJS.ErrnoException).code;
   if (code === "ENOENT" || code === "ENOTDIR" || code === "ELOOP") {
@@ -611,28 +673,30 @@ function failure(error: unknown, path: string): FsFailure {
   return new FsFailure("failed", error instanceof Error ? error.message : "Failed");
 }
 
-const mtimeOf = (stats: Stats) => Math.floor(stats.mtimeMs);
+export const mtimeOf = (stats: Stats) => Math.floor(stats.mtimeMs);
+
+/** The real location of a path, which has to be inside the fixture. */
+export function resolveInFixture(root: string, path: unknown): string {
+  if (!isValidPath(path)) {
+    throw new FsFailure("bad_request", "path must be an absolute, normalised path");
+  }
+  let real: string;
+  try {
+    real = realpathSync(path);
+  } catch (error) {
+    throw failure(error, path);
+  }
+  if (real !== root && !real.startsWith(`${root}/`)) {
+    throw new FsFailure(
+      "permission_denied",
+      `The mock agent serves only its fixture directory, and ${path} is outside it.`,
+    );
+  }
+  return real;
+}
 
 export function createFsMethods(root: string, windows: () => Window[]) {
-  /** The real location of a path, which has to be inside the fixture. */
-  function resolve(path: unknown): string {
-    if (!isValidPath(path)) {
-      throw new FsFailure("bad_request", "path must be an absolute, normalised path");
-    }
-    let real: string;
-    try {
-      real = realpathSync(path);
-    } catch (error) {
-      throw failure(error, path);
-    }
-    if (real !== root && !real.startsWith(`${root}/`)) {
-      throw new FsFailure(
-        "permission_denied",
-        `The mock agent serves only its fixture directory, and ${path} is outside it.`,
-      );
-    }
-    return real;
-  }
+  const resolve = (path: unknown) => resolveInFixture(root, path);
 
   function entry(directory: string, name: string): FsEntry {
     const path = join(directory, name);

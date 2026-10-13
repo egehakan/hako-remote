@@ -18,6 +18,11 @@
 // MOCK_FS=0 leaves the file methods out, as an older desktop app would; MOCK_FS_DELAY_MS=1500
 // makes them slow.
 //
+// Files travel in both directions through the transfer methods: downloads out of that tree, uploads
+// into it, and uploads into a throwaway "uploads area" that is removed at exit. `kill -USR2` also
+// rewrites Downloads/changes-while-read.bin, a file of several pieces. MOCK_TRANSFERS=0 leaves
+// these methods out, and MOCK_UPLOAD_IDLE_MS shortens the 15 minutes an untouched upload is kept.
+//
 // The folders of that tree are git repositories, built at start with the real `git` command line,
 // and the source control methods run git in them and refuse every repository outside the tree.
 // MOCK_GIT=0 leaves those methods out, MOCK_GIT_EMPTY=1 answers that there are no repositories,
@@ -55,13 +60,16 @@ import {
   createFsMethods,
   FsFailure,
   removeFixture,
+  rewriteChangingFile,
   rewriteConflictFile,
 } from "./mock-files.ts";
+import { createTransferMethods } from "./mock-transfers.ts";
 
 const RELAY_URL = process.env.RELAY_URL ?? `ws://localhost:${process.env.PORT ?? 8787}/ws/agent`;
 const AGENT_KEY = process.env.HAKO_AGENT_KEY ?? "";
 const FS_ENABLED = process.env.MOCK_FS !== "0";
 const FS_DELAY_MS = Number(process.env.MOCK_FS_DELAY_MS ?? 0);
+const TRANSFERS_ENABLED = FS_ENABLED && process.env.MOCK_TRANSFERS !== "0";
 const GIT_ENABLED = process.env.MOCK_GIT !== "0";
 const GIT_DELAY_MS = Number(process.env.MOCK_GIT_DELAY_MS ?? 0);
 const DEFAULT_COLS = 120;
@@ -608,7 +616,15 @@ const methods: Record<string, Method> = {
   "theme.get": () => THEME,
 };
 
-const fsMethods: Record<string, Method> = FS_ENABLED ? createFsMethods(HOME, () => windows) : {};
+const transfers = TRANSFERS_ENABLED
+  ? createTransferMethods(HOME, {
+      idleMs: process.env.MOCK_UPLOAD_IDLE_MS ? Number(process.env.MOCK_UPLOAD_IDLE_MS) : undefined,
+      log: (line) => console.log(line),
+    })
+  : null;
+const fsMethods: Record<string, Method> = FS_ENABLED
+  ? { ...createFsMethods(HOME, () => windows), ...transfers?.methods }
+  : {};
 const gitMethods: Record<string, Method> = GIT_ENABLED
   ? createGitMethods(HOME, () => windows, {
       empty: process.env.MOCK_GIT_EMPTY === "1",
@@ -875,6 +891,7 @@ function stop(): void {
   stopping = true;
   // To a client this must look like a Mac that went offline, not like terminals that ended.
   for (const terminal of terminals.values()) terminal.abandon();
+  transfers?.dispose();
   removeFixture(HOME);
   rmSync(NOTIFY_FILE, { force: true });
   if (process.stdin.isTTY) process.stdin.setRawMode(false);
@@ -888,6 +905,7 @@ process.on("SIGUSR1", () => {
 });
 process.on("SIGUSR2", () => {
   console.log(`rewrote ${rewriteConflictFile(HOME)}`);
+  console.log(`rewrote ${rewriteChangingFile(HOME)}`);
 });
 
 console.log(
@@ -895,6 +913,12 @@ console.log(
     ? `serving files from ${HOME} (pid ${process.pid})`
     : "the file methods are off (MOCK_FS=0)",
 );
+
+if (transfers) {
+  console.log(`attached pictures are kept in ${transfers.uploadsRoot} until this stops`);
+} else if (FS_ENABLED) {
+  console.log("the transfer methods are off (MOCK_TRANSFERS=0)");
+}
 
 if (GIT_FIXTURE) {
   console.log(
