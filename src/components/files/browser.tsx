@@ -33,19 +33,19 @@ import { FolderIcon } from "@/components/folder-icon";
 import { MacOffline } from "@/components/mac-offline";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { NEEDS_NEWER_HAKO } from "@/lib/errors";
 import { formatCount, formatModified, formatModifiedFull, formatSize } from "@/lib/files/format";
+import { inDisplayOrder } from "@/lib/files/order";
 import { baseName, crumbsFor, isWithin, joinPath, parentOf, rootFor } from "@/lib/files/paths";
 import { filesPrefs, useFilesPrefs, useListing, useRoots } from "@/lib/files/store";
 import { useConnection, useWorkspace } from "@/lib/hooks";
 import { tildify } from "@/lib/paths";
 import { navigate, routes } from "@/lib/route";
 import { uploadFiles } from "@/lib/transfers/actions";
-import { NEEDS_NEWER_HAKO } from "@/lib/transfers/describe";
 import { useTransferSupport } from "@/lib/transfers/store";
 import { cn } from "@/lib/utils";
 
 const ROW_HEIGHT = 48;
-const NAMES = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
 type FilesBrowserProps = {
   /** The directory on show, or null for the list of places to start from. */
@@ -235,7 +235,7 @@ function RootsList({ offline }: { offline: boolean }) {
   );
 }
 
-function StaleNotice() {
+export function StaleNotice() {
   return (
     <Alert className="mx-auto mt-3 w-[calc(100%-2rem)]">
       <CircleAlertIcon />
@@ -278,15 +278,14 @@ function DirectoryList({ path, selectedFile, offline }: DirectoryListProps) {
     if (isFile) navigate(routes.file(path), { replace: true });
   }, [isFile, path]);
 
-  const rows = useMemo(() => {
-    const sorted = (data?.entries ?? []).toSorted(
-      (a, b) =>
-        Number(isDirectory(b)) - Number(isDirectory(a)) ||
-        NAMES.compare(a.name, b.name) ||
-        (a.name < b.name ? -1 : 1),
-    );
-    return sorted.map((entry): Row => ({ entry, path: joinPath(path, entry.name) }));
-  }, [data, path]);
+  const rows = useMemo(
+    () =>
+      inDisplayOrder(data?.entries ?? []).map((entry): Row => ({
+        entry,
+        path: joinPath(path, entry.name),
+      })),
+    [data, path],
+  );
 
   const { visible, hiddenCount } = useMemo(() => {
     let hiddenCount = 0;

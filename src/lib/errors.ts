@@ -1,5 +1,8 @@
 import { RpcFailure } from "./connection";
 
+/** What an action says when the Hako on the Mac is too old for it. */
+export const NEEDS_NEWER_HAKO = "Update Hako on your Mac to use this.";
+
 /** Says what went wrong with a request to the Mac, and what to do about it. */
 export function describeFailure(error: unknown): string {
   if (!(error instanceof RpcFailure)) return "Something went wrong. Try again.";

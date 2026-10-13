@@ -3,8 +3,6 @@
 import { formatSize } from "@/lib/files/format";
 import type { Transfer } from "./queue";
 
-export const NEEDS_NEWER_HAKO = "Update Hako on your Mac to use this.";
-
 /** Why a transfer failed, and what to do about it. */
 export function describeTransferFailure(transfer: Transfer, maxBytes: number): string {
   const { error, direction } = transfer;

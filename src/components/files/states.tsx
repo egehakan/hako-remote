@@ -13,8 +13,8 @@ import type { FsError } from "@/lib/files/store";
 
 type FsProblemProps = {
   error: FsError;
-  /** What could not be read, as it reads in a sentence: "folder" or "file". */
-  what: "folder" | "file";
+  /** What could not be read, as it reads in a sentence. */
+  what: "folder" | "file" | "directory";
   /** Buttons that lead somewhere useful from here. */
   children?: ReactNode;
 };

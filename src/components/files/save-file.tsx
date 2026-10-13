@@ -6,13 +6,13 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { NEEDS_NEWER_HAKO } from "@/lib/errors";
 import { formatSize } from "@/lib/files/format";
 import { parentOf } from "@/lib/files/paths";
 import { useConnection } from "@/lib/hooks";
 import { tildify } from "@/lib/paths";
 import { isTouchDevice } from "@/lib/terminal/prefs";
 import { saveToDevice } from "@/lib/transfers/actions";
-import { NEEDS_NEWER_HAKO } from "@/lib/transfers/describe";
 import { useTransferSupport } from "@/lib/transfers/store";
 
 /** What the action is called: a phone is "your phone", and anything else is not. */
