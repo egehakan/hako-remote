@@ -3,7 +3,7 @@
 
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
-import type { KeyModes } from "./keys";
+import { encodeWheel, type KeyModes } from "./keys";
 import type { Size, TerminalSink } from "./session";
 import type { TerminalLook } from "./theme";
 
@@ -26,6 +26,8 @@ export type SurfaceOptions = {
   onData: (data: string) => void;
   /** Arrow keys for a full-screen program that is being scrolled by touch. */
   onScrollKeys: (key: "ArrowUp" | "ArrowDown", count: number) => void;
+  /** Wheel notches, already encoded, for a full-screen program that reads the mouse. */
+  onScrollWheel: (data: string) => void;
   /** Called when the size this screen could hold changes while the layout is "phone". */
   onPhoneSize: (size: Size) => void;
   /** Called when scrolling or output changes whether older output is hidden below the view. */
@@ -39,6 +41,7 @@ const MAX_FONT_PX = 40;
 /** What xterm keeps free for its scrollbar when it works out how many columns fit. */
 const XTERM_SCROLLBAR_PX = 14;
 const MAX_SCROLL_KEYS_PER_MOVE = 6;
+const SGR_MOUSE_MODE = 1006;
 
 /**
  * Keeps this terminal from answering the program's questions (device attributes, cursor position,
@@ -85,6 +88,8 @@ export class TerminalSurface implements TerminalSink {
   /** Whether the view keeps the cursor in sight as output arrives. Dragging the view turns it off. */
   private following = true;
   private pendingScroll = 0;
+  /** Whether the program asked for mouse reports in the SGR form, which xterm does not tell. */
+  private sgrMouse = false;
   private lastPhoneSize: Size | null = null;
   private revealQueued = false;
   private readonly observer: ResizeObserver;
@@ -109,6 +114,7 @@ export class TerminalSurface implements TerminalSink {
       macOptionClickForcesSelection: true,
     });
     muteReplies(this.terminal);
+    this.watchMouseEncoding();
     this.terminal.loadAddon(this.fit);
     this.terminal.onData((data) => options.onData(data));
     this.terminal.onScroll(() => this.noteScroll());
@@ -118,6 +124,21 @@ export class TerminalSurface implements TerminalSink {
     });
     this.observer = new ResizeObserver(() => this.scheduleLayout());
     void this.open();
+  }
+
+  /** Follows mode 1006 as the program sets it. Every handler passes the sequence on to xterm. */
+  private watchMouseEncoding(): void {
+    const parser = this.terminal.parser;
+    const note = (on: boolean) => (params: (number | number[])[]) => {
+      if (params.includes(SGR_MOUSE_MODE)) this.sgrMouse = on;
+      return false;
+    };
+    parser.registerCsiHandler({ prefix: "?", final: "h" }, note(true));
+    parser.registerCsiHandler({ prefix: "?", final: "l" }, note(false));
+    parser.registerEscHandler({ final: "c" }, () => {
+      this.sgrMouse = false;
+      return false;
+    });
   }
 
   /** Waits for the web font, so the first measurement is of the font that will be drawn. */
@@ -295,7 +316,7 @@ export class TerminalSurface implements TerminalSink {
   /**
    * Moves the view by a finger's travel in CSS pixels: `dy` above zero shows older output. Panning
    * the oversized terminal and scrolling its history behave as one long page; a full-screen program
-   * has no history, so it gets arrow keys instead.
+   * has no history, so it gets wheel notches if it reads the mouse and arrow keys if it does not.
    */
   scrollBy(dx: number, dy: number): void {
     const { scroller } = this.options;
@@ -322,6 +343,12 @@ export class TerminalSurface implements TerminalSink {
     return this.terminal.buffer.active.type === "alternate";
   }
 
+  /** True while the program wants the wheel reported, in the one form this app sends it in. */
+  private get takesWheel(): boolean {
+    const tracking = this.terminal.modes.mouseTrackingMode;
+    return this.sgrMouse && tracking !== "none" && tracking !== "x10";
+  }
+
   /** Scrolls the history by a distance in pixels, keeping the part of a line for the next call. */
   private scrollLines(pixels: number): void {
     const height = this.cell().height;
@@ -332,7 +359,14 @@ export class TerminalSurface implements TerminalSink {
     this.pendingScroll -= lines * height;
     if (this.terminal.buffer.active.type === "alternate") {
       const count = Math.min(Math.abs(lines), MAX_SCROLL_KEYS_PER_MOVE);
-      this.options.onScrollKeys(lines < 0 ? "ArrowUp" : "ArrowDown", count);
+      if (this.takesWheel) {
+        const column = Math.ceil(this.terminal.cols / 2);
+        const row = Math.ceil(this.terminal.rows / 2);
+        const notch = encodeWheel(lines < 0 ? "up" : "down", column, row);
+        this.options.onScrollWheel(notch.repeat(count));
+      } else {
+        this.options.onScrollKeys(lines < 0 ? "ArrowUp" : "ArrowDown", count);
+      }
     } else {
       this.terminal.scrollLines(lines);
     }

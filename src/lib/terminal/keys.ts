@@ -139,6 +139,14 @@ export function encodePaste(text: string, bracketed: boolean): string {
   return PASTE_START + lines.replaceAll(PASTE_END, "") + PASTE_END;
 }
 
+/**
+ * One notch of the mouse wheel over a cell, in the SGR form (`CSI < button ; column ; row M`) a
+ * program asks for with mode 1006. `column` and `row` count from 1.
+ */
+export function encodeWheel(direction: "up" | "down", column: number, row: number): string {
+  return `${ESC}[<${direction === "up" ? 64 : 65};${column};${row}M`;
+}
+
 export type KeyEventLike = {
   key: string;
   ctrlKey: boolean;

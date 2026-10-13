@@ -59,9 +59,10 @@ of the Hako on your Mac. `#/t/<session id>` is its address, so a link can open o
 - **Message box.** One tap switches between typing straight into the terminal, with autocorrect
   off, and a message box with autocorrect and dictation on. "Send" writes the message and presses
   Enter; "Insert" writes it without. This is the comfortable way to write a prompt for Claude Code.
-- **Scrolling and copying.** One finger scrolls the history, and in a full-screen program sends
-  arrow keys. Holding a finger on the terminal, or "Select text" under "more", shows the history and
-  the screen as plain text that selects and copies like any other.
+- **Scrolling and copying.** One finger scrolls the history. A full-screen program gets the mouse
+  wheel if it reads the mouse, as Claude Code does, and arrow keys if it does not. Holding a finger
+  on the terminal, or "Select text" under "more", shows the history and the screen as plain text
+  that selects and copies like any other.
 - **Attaching a picture.** The picture key on the key bar, or the same button beside the message
   box, offers the phone's photo library, camera and files. Each picture goes to your Mac and its
   path is typed where you are writing, as if you had dragged the picture into the terminal, with a

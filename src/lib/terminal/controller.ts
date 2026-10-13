@@ -68,6 +68,7 @@ export class TerminalController {
         );
         if (data !== null) this.session.send(data.repeat(count));
       },
+      onScrollWheel: (data) => this.session.send(data),
       onPhoneSize: (size) => {
         if (this.fitPhone) this.session.setFit(size);
       },

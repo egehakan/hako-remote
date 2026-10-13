@@ -5,6 +5,7 @@ import {
   encodeKeyEvent,
   encodePaste,
   encodeText,
+  encodeWheel,
   type KeyEventLike,
   NO_MODIFIERS,
 } from "../src/lib/terminal/keys.ts";
@@ -23,6 +24,11 @@ test("arrows follow the cursor key mode the program asked for", () => {
   assert.equal(encodeKey("ArrowUp", NO_MODIFIERS, APPLICATION), "\x1bOA");
   assert.equal(encodeKey("Home", NO_MODIFIERS, APPLICATION), "\x1bOH");
   assert.equal(encodeKey("End", NO_MODIFIERS, NORMAL), "\x1b[F");
+});
+
+test("a wheel notch is an SGR mouse report over a cell", () => {
+  assert.equal(encodeWheel("up", 40, 12), "\x1b[<64;40;12M");
+  assert.equal(encodeWheel("down", 1, 1), "\x1b[<65;1;1M");
 });
 
 test("a modified arrow uses the CSI form in either mode", () => {
