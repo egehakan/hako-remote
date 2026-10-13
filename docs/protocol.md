@@ -1101,6 +1101,10 @@ epoch.
   branches `upstream`, `ahead`, `behind` and `worktree` are null.
 - Symbolic remote heads such as `origin/HEAD` are left out, and a remote branch is left out when a
   local branch has it as its upstream.
+- A local branch whose upstream is configured but no longer exists is reported with
+  `upstream: null`, and so with `ahead` and `behind` `null`.
+- `worktree` is the path exactly as `git.repos` lists that working tree, so the client can lead
+  from the branch to the repository that holds it.
 
 #### `git.switch`
 
@@ -1109,12 +1113,20 @@ epoch.
 - `kind: "local"` runs `git switch <branch>`; `kind: "remote"` (branch is `origin/feature`) runs
   `git switch --track <branch>`; `kind: "new"` runs `git switch -c <branch>` from the current HEAD.
 - `branch` must pass `git check-ref-format --branch` (otherwise `bad_request`), and must never be
-  passed where git could read it as an option.
+  passed where git could read it as an option. A value that git would expand into another name,
+  such as `@{-1}`, answers `bad_request` too.
 - Never forced, never stashes, never discards: when git refuses (local changes would be
   overwritten, the branch is checked out in another worktree, the name exists), the answer is
   `git_failed` with git's message.
 - Uses the same per-repo `busy` guard as commit and push. `git.changed` for that repo follows a
   successful switch.
+- `git.changed` follows a switch that git refused as well, as it does for the other commands, so a
+  client reads the repository again after a refusal too.
+- The agent gives `git switch` the 240 seconds it gives the other commands that change a
+  repository (see [Operations that take long](#operations-that-take-long)). The client waits 60
+  seconds, so a checkout slower than that is answered by the relay with `timeout` while git
+  finishes on the Mac. The client takes `timeout` on a switch to mean that it is still running,
+  not that it failed, and reads the repository again when `git.changed` arrives.
 
 #### `git.log`
 
@@ -1133,6 +1145,9 @@ epoch.
   stash refs are left out); `side: "both" | "local" | "remote"`: reachable from HEAD and the
   upstream, only from HEAD (not pushed yet), or only from the upstream (not pulled yet). Without an
   upstream every commit is `"both"`.
+- In a repository that has no commit of its own yet but whose branch has an upstream, every commit
+  is `"remote"`.
+- `author` is the name after the repository's mailmap has been applied.
 
 #### `git.show`
 
@@ -1143,6 +1158,7 @@ epoch.
   subject (at most 16 KiB), and `files` the files it changed against its first parent (against the
   empty tree for a root commit) in the same `File` shape `git.status` uses, with renames detected,
   capped at 2,000 with `truncated`.
+- A commit that is reachable from neither HEAD nor the upstream has `side: "both"`.
 
 #### Operations that take long
 
@@ -1170,8 +1186,8 @@ or that the set of repositories itself changed. The client reads again whatever 
 list, that repository's files, its branches and its graph, an open diff.
 
 The event is optional. An agent that sends it does so at most once a second per repository, after
-each `git.commit`, `git.push`, `git.pull` and `git.discard` (failed ones included, since a failed
-pull changes files too), after a successful `git.switch`, and, if it watches the working trees, when something changed them from
+each `git.commit`, `git.push`, `git.pull`, `git.discard` and `git.switch` (failed ones included,
+since a failed pull changes files too), and, if it watches the working trees, when something changed them from
 outside. A client must not depend on it: it also reads again when the screen is opened, when the
 owner asks, after each of its own commands, and when the page comes back to the foreground.
 
