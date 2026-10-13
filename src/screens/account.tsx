@@ -1,6 +1,7 @@
 import { CircleCheckIcon, LogOutIcon } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { DetailHeader } from "@/components/detail-header";
+import { DisplayDetails } from "@/components/display-details";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
@@ -160,6 +161,10 @@ export function AccountScreen({ email, onLoggedOut }: { email: string; onLoggedO
           )}
           Log out
         </Button>
+
+        <Separator />
+
+        <DisplayDetails />
       </div>
     </>
   );
