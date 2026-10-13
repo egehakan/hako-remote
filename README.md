@@ -6,8 +6,10 @@ are open, what each terminal is running, and whether a coding agent in one of th
 waiting for you or done. You can open a terminal in a folder, bring a tab to the front and close
 one, and you can use any of those terminals live: a shell, or a full-screen program such as Claude
 Code, with the keys a phone keyboard lacks. You can also browse the folders of your projects, read a
-file with syntax colours, and make a small edit and save it; and you can see what changed in every
-repository in those folders, read the diffs, and commit, push and pull. And your phone is told
+file with syntax colours, make a small edit and save it, save any file to your phone and put files
+from your phone into a folder on the Mac; you can hand Claude Code a picture from your phone in a
+terminal; and you can see what changed in every repository in those folders, read the diffs, and
+commit, push and pull. And your phone is told
 when an agent is waiting for you or has finished, and when a long command is done.
 
 Hako Remote is a companion to [Hako](https://github.com/egehakan/hako), a personal terminal that is
@@ -19,8 +21,8 @@ There are three parties, and the contract between them is [docs/protocol.md](doc
 
 The **agent** is the Hako desktop app. It never listens on the network. It dials out to the relay
 over a WebSocket, proves itself with a shared key, and then answers requests: list the workspace,
-create a tab, close a tab, attach to a terminal, list a directory, read and write a file, run git
-in a repository.
+create a tab, close a tab, attach to a terminal, list a directory, read and write a file, move a
+file in pieces, run git in a repository.
 
 The **relay** is the server in this repository, a single Node process. It serves the web app, keeps
 the one account and its login sessions in SQLite, and passes messages between the agent and any
@@ -60,6 +62,15 @@ of the Hako on your Mac. `#/t/<session id>` is its address, so a link can open o
 - **Scrolling and copying.** One finger scrolls the history, and in a full-screen program sends
   arrow keys. Holding a finger on the terminal, or "Select text" under "more", shows the history and
   the screen as plain text that selects and copies like any other.
+- **Attaching a picture.** The picture key on the key bar, or the same button beside the message
+  box, offers the phone's photo library, camera and files. Each picture goes to your Mac and its
+  path is typed where you are writing, as if you had dragged the picture into the terminal, with a
+  space after it and without Enter; Claude Code takes such a path as an attached image. Several in
+  a row work, each with a small progress chip, and if one does not arrive nothing is typed. A
+  picture Claude Code cannot take (an iPhone's HEIC) is turned into a JPEG first, and one larger
+  than 2,576 pixels on its longer side is scaled down to that; any other picture is sent as it is.
+  **On the Mac attached pictures are kept in `~/.hako/uploads/<date>/` and deleted after 7 days**,
+  not in your project.
 - **Moving around.** Tapping the title lists every terminal on the Mac; swiping the title bar steps
   to the next or the previous one. A tab with several terminals shows them as a row to choose from.
 - **When the link breaks.** If the Mac goes offline or the connection drops, the last screen stays
@@ -87,10 +98,23 @@ terminal's working directory.
   phone keyboard buries. Save writes the file back. If the file changed on your Mac in the
   meantime, nothing is written and you choose: reload the Mac's version, or overwrite it with
   yours. Leaving with unsaved changes asks first.
-- Creating, renaming, moving and deleting stay on the Mac.
+- **Saving to your phone.** "Save to phone", in a file's menu (the dots at the end of its row) or
+  at the top of an open file, fetches it with a progress bar and hands it over. On an iPhone that
+  is the share sheet, which is the dependable way from a home-screen app to "Save Image" into
+  Photos or "Save to Files"; a computer's browser downloads it. Any file up to 50 MB; if it changes
+  on the Mac while it is being read, you are told and can try again. Folders cannot be saved.
+- **Uploading.** "Upload" at the bottom of a folder opens the phone's own choice of photo library,
+  camera and files, several at a time, and puts them in that folder exactly as they are, up to 50
+  MB each. Each has its progress and can be cancelled. A name that is already there is never
+  overwritten without asking: replace it, keep both (the new one becomes `name (2).ext`), or
+  cancel. A file only appears under its name on the Mac once it has arrived whole.
+- **When the link breaks.** A transfer pauses while the Mac is out of reach (or the phone puts the
+  app in the background) and goes on by itself when it is back. If Hako on the Mac was restarted
+  in the meantime, the transfer fails with a button to try again.
+- Renaming, moving and deleting stay on the Mac.
 
 A Hako that does not have the file methods yet answers `not_supported`, and Files says to update
-it.
+it; the same goes for saving, uploading and attaching pictures, which need a newer Hako again.
 
 ## Source control
 
@@ -194,6 +218,13 @@ work, dangle and point outside.
 - `kill -USR2 <pid of the mock agent>` rewrites `fixtures/conflict.txt`, which is how to see a
   save being refused because the file changed.
 - `MOCK_FS=0` leaves the file methods out, as a desktop app from before they existed would.
+- `Downloads` holds what moving files is tried with: files of several pieces, one at the 50 MB limit
+  and one just over it, `notes.txt` to upload another of, and a folder that may not be written to.
+  `kill -USR2 <pid>` also rewrites `Downloads/changes-while-read.bin`, to see a download refused
+  because the file changed. Attached pictures go to a temporary uploads area of the mock agent's
+  own, which it names at start and removes when it stops.
+- `MOCK_TRANSFERS=0` leaves out only the transfer methods, as the desktop app before them would;
+  `MOCK_UPLOAD_IDLE_MS` shortens the 15 minutes an untouched upload is kept.
 - `MOCK_FS_DELAY_MS=1500` makes every file answer slow.
 
 ### The mock agent's repositories
