@@ -149,6 +149,14 @@ export default function TerminalScreen({ sessionId }: { sessionId: string }) {
     else controller?.surface.terminal.focus();
   }, [controller, touch]);
 
+  // A sheet hands the keyboard's focus back to the button that opened it. With a keyboard and a
+  // mouse that leaves the next keys with the button, so there it goes to the terminal instead; on
+  // a touch screen that would raise the on-screen keyboard, and the button keeps it.
+  const focusAfterSheet = useCallback(
+    () => (touch ? true : (controller?.surface.terminal.textarea ?? true)),
+    [controller, touch],
+  );
+
   const toggleInputMode = () => {
     const next = prefs.inputMode === "message" ? "keys" : "message";
     // The other field has to exist before this tap ends, or the keyboard would close in between.
@@ -279,6 +287,8 @@ export default function TerminalScreen({ sessionId }: { sessionId: string }) {
       <div className="relative min-h-0 flex-1" style={{ backgroundColor: look.background }}>
         <div
           ref={scroller}
+          // A click always leaves the keys with the terminal, whatever held the focus before.
+          onClick={touch ? undefined : () => controller?.surface.terminal.focus()}
           className={cn(
             "terminal-scroller absolute inset-y-0 right-[max(2px,env(safe-area-inset-right))] left-[max(2px,env(safe-area-inset-left))] transition-opacity",
             touch ? "overflow-hidden" : "overflow-auto",
@@ -385,12 +395,14 @@ export default function TerminalScreen({ sessionId }: { sessionId: string }) {
             ? phoneFontSize(prefs, look, touch) < PHONE_FONT_RANGE.max
             : prefs.macZoom < MAC_ZOOM_RANGE.max
         }
+        finalFocus={focusAfterSheet}
       />
       <SwitcherSheet
         open={switcherOpen}
         onOpenChange={setSwitcherOpen}
         terminals={terminals}
         currentSessionId={sessionId}
+        finalFocus={focusAfterSheet}
         onChoose={choose}
         onCloseTab={
           current && canAct

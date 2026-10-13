@@ -1,3 +1,4 @@
+import type { ComponentProps } from "react";
 import { AgentBadge } from "@/components/agent-badge";
 import { FolderIcon } from "@/components/folder-icon";
 import { Button } from "@/components/ui/button";
@@ -21,6 +22,8 @@ type SwitcherSheetProps = {
   onChoose: (terminal: TerminalLocation) => void;
   /** Closes the tab the current terminal is in, after the usual confirmation. */
   onCloseTab: (() => void) | null;
+  /** Where the keyboard's focus goes when the sheet closes. */
+  finalFocus?: ComponentProps<typeof SheetContent>["finalFocus"];
 };
 
 /** Every terminal on the Mac in one short list, to move between them without the workspace list. */
@@ -31,6 +34,7 @@ export function SwitcherSheet({
   currentSessionId,
   onChoose,
   onCloseTab,
+  finalFocus,
 }: SwitcherSheetProps) {
   const windows = [...new Set(terminals.map((terminal) => terminal.window))];
   return (
@@ -38,6 +42,7 @@ export function SwitcherSheet({
       <SheetContent
         side="bottom"
         className="mx-auto max-h-[min(34rem,85dvh)] max-w-lg gap-0 rounded-t-2xl border-x"
+        finalFocus={finalFocus}
       >
         <SheetHeader className="pr-12">
           <SheetTitle>Terminals</SheetTitle>

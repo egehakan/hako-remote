@@ -1,4 +1,5 @@
 import { MinusIcon, PlusIcon } from "lucide-react";
+import type { ComponentProps } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -9,6 +10,8 @@ import {
 } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import type { Size } from "@/lib/terminal/session";
+
+type SheetContentProps = ComponentProps<typeof SheetContent>;
 
 type ViewSheetProps = {
   open: boolean;
@@ -23,6 +26,8 @@ type ViewSheetProps = {
   onZoom: (direction: 1 | -1 | 0) => void;
   canZoomOut: boolean;
   canZoomIn: boolean;
+  /** Where the keyboard's focus goes when the sheet closes. */
+  finalFocus?: SheetContentProps["finalFocus"];
 };
 
 /** Size and zoom: whose size the terminal has, and how large its text is drawn here. */
@@ -37,12 +42,14 @@ export function ViewSheet({
   onZoom,
   canZoomOut,
   canZoomIn,
+  finalFocus,
 }: ViewSheetProps) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="bottom"
         className="mx-auto max-w-lg gap-0 rounded-t-2xl border-x pb-[max(1rem,env(safe-area-inset-bottom))]"
+        finalFocus={finalFocus}
       >
         <SheetHeader className="pr-12">
           <SheetTitle>Size and zoom</SheetTitle>
