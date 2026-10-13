@@ -17,6 +17,25 @@ export const GIT_COMMAND_LIMIT_MS = 240_000;
 /** Finding every repository can mean walking large folders. */
 export const GIT_REPOS_TIMEOUT_MS = 60_000;
 
+/**
+ * How long the client asks the relay to wait for a switch of branch. The agent lets git run longer
+ * than this, so no answer by then means that the switch is still going on.
+ */
+export const GIT_SWITCH_TIMEOUT_MS = 60_000;
+/** `git.branches` lists at most this many branches. */
+export const GIT_BRANCH_LIMIT = 500;
+export const GIT_LOG_DEFAULT_LIMIT = 50;
+export const GIT_LOG_MAX_LIMIT = 200;
+/** A subject line longer than this many characters is cut. */
+export const GIT_SUBJECT_LIMIT = 200;
+/** The most of a commit's message, after its subject, that `git.show` carries. */
+export const GIT_BODY_LIMIT_BYTES = 16 * 1024;
+
+/** True for a commit named the way `git.show` accepts: a full or an abbreviated hash. */
+export function isCommitId(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-fA-F]{4,64}$/.test(value);
+}
+
 export type StatusEntry = Pick<GitFile, "path" | "old_path" | "status">;
 
 export type ParsedStatus = {

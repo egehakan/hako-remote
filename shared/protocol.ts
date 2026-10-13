@@ -208,7 +208,13 @@ export type GitFile = {
 export type GitReposResult = { repos: GitRepo[] };
 export type GitStatusResult = { repo: GitRepo; files: GitFile[]; truncated: boolean };
 
-export type GitDiffParams = { repo: string; path: string; old_path?: string | null };
+export type GitDiffParams = {
+  repo: string;
+  path: string;
+  old_path?: string | null;
+  /** The file's change in this commit against its first parent, instead of the working tree's. */
+  commit?: string;
+};
 export type GitDiffResult =
   | { kind: "text"; diff: string }
   | { kind: "binary"; old_size: number | null; new_size: number | null }
@@ -218,6 +224,70 @@ export type GitCommitResult = { commit: string; output: string; repo: GitRepo };
 export type GitPushResult = { output: string; published: boolean; repo: GitRepo };
 export type GitPullResult = { output: string; repo: GitRepo };
 export type GitDiscardResult = { repo: GitRepo };
+
+export type GitBranch = {
+  /** `main` for a local branch, `origin/main` for a remote one. */
+  name: string;
+  kind: "local" | "remote";
+  tip: string;
+  /** The tip's committer time. */
+  time: number;
+  subject: string;
+  /** Local branches only; null for one that tracks nothing, and for every remote branch. */
+  upstream: string | null;
+  ahead: number | null;
+  behind: number | null;
+  /** Another working tree that has this branch checked out, which is why it cannot be switched to. */
+  worktree: string | null;
+};
+
+export type GitBranchesResult = {
+  /** Null when HEAD is detached. */
+  current: string | null;
+  detached: boolean;
+  /** Null in a repository with no commits. */
+  head: string | null;
+  branches: GitBranch[];
+  truncated: boolean;
+};
+
+export type GitSwitchKind = "local" | "remote" | "new";
+export type GitSwitchParams = { repo: string; branch: string; kind: GitSwitchKind };
+export type GitSwitchResult = { current: string | null; head: string | null };
+
+export type GitRefKind = "head" | "local" | "remote" | "tag";
+export type GitRef = { name: string; kind: GitRefKind };
+/** Reachable from HEAD and the upstream, only from HEAD (to push), or only from the upstream (to pull). */
+export type GitSide = "both" | "local" | "remote";
+
+export type GitCommit = {
+  id: string;
+  parents: string[];
+  subject: string;
+  author: string;
+  /** The author time. */
+  time: number;
+  refs: GitRef[];
+  side: GitSide;
+};
+
+export type GitLogParams = { repo: string; limit?: number; skip?: number };
+export type GitLogResult = {
+  commits: GitCommit[];
+  has_more: boolean;
+  head: string | null;
+  /** The tip of the current branch's upstream, or null when it has none. */
+  upstream: string | null;
+};
+
+export type GitShowResult = {
+  commit: GitCommit;
+  /** The message after its subject line. */
+  body: string;
+  /** What the commit changed against its first parent, or against nothing for a root commit. */
+  files: GitFile[];
+  truncated: boolean;
+};
 
 /** `repo` is null when more than one repository, or the set of repositories, may have changed. */
 export type GitChangedEvent = { repo: string | null };
