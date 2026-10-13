@@ -99,6 +99,9 @@ export type Workspace = { windows: Window[] };
 export type TabCreateParams = { window_id?: string; folder_id?: string; directory?: string };
 export type TabCreateResult = { tab_id: string; session_id: string };
 
+export type FolderCreateParams = { directory: string; window_id?: string };
+export type FolderCreateResult = { folder_id: string };
+
 export type TermSubscribeResult = { cols: number; rows: number; seq: number; snapshot: string };
 
 export type TerminalTheme = {
@@ -135,6 +138,8 @@ export type FsReadResult =
 
 export type FsWriteParams = { path: string; content: string; expected_mtime: number | null };
 export type FsWriteResult = { mtime: number; size: number };
+
+export type FsMkdirParams = { path: string };
 
 export type FsTransferInfo = { max_bytes: number; chunk_bytes: number };
 

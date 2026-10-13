@@ -38,6 +38,29 @@ export function isValidPath(path: unknown): path is string {
     .every((segment) => segment !== "" && segment !== "." && segment !== "..");
 }
 
+export const NAME_MAX_BYTES = 255;
+
+export type NameProblem = "empty" | "reserved" | "slash" | "nul" | "too_long";
+
+const encoder = new TextEncoder();
+
+/** How long a name is where the limit counts it: in bytes of UTF-8. */
+export function nameBytes(name: string): number {
+  return encoder.encode(name).length;
+}
+
+/**
+ * What keeps a name from being one segment of a path that something is created under, or null when
+ * nothing does. `fs.mkdir` and the uploads hold the last part of a path to this.
+ */
+export function nameProblem(name: string): NameProblem | null {
+  if (name === "") return "empty";
+  if (name === "." || name === "..") return "reserved";
+  if (name.includes("/")) return "slash";
+  if (name.includes("\0")) return "nul";
+  return nameBytes(name) > NAME_MAX_BYTES ? "too_long" : null;
+}
+
 export function isDirectory(entry: Pick<FsEntry, "kind" | "target">): boolean {
   return entry.kind === "dir" || (entry.kind === "symlink" && entry.target === "dir");
 }

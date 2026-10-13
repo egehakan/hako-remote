@@ -1,5 +1,7 @@
 // The rules of the transfer methods in docs/protocol.md that both ends have to agree on.
 
+import { NAME_MAX_BYTES, nameBytes, nameProblem } from "./files.ts";
+
 /** The largest file that travels in either direction. */
 export const TRANSFER_MAX_BYTES = 50 * 1024 * 1024;
 /** The most bytes one piece carries, before base64. */
@@ -13,17 +15,11 @@ export const UPLOADS_AREA_KEPT_MS = 7 * 24 * 60 * 60_000;
 /** What the client asks the relay to wait for a request that carries a piece. */
 export const TRANSFER_REQUEST_TIMEOUT_MS = 60_000;
 
-const NAME_MAX_BYTES = 255;
 const CLEAN_STEM_MAX = 64;
-const encoder = new TextEncoder();
-
-const byteLength = (text: string) => encoder.encode(text).length;
 
 /** True for one segment of a path that a file can be created under. */
 export function isValidFileName(name: unknown): name is string {
-  if (typeof name !== "string" || name === "" || name === "." || name === "..") return false;
-  if (name.includes("/") || name.includes("\0")) return false;
-  return byteLength(name) <= NAME_MAX_BYTES;
+  return typeof name === "string" && nameProblem(name) === null;
 }
 
 /** How many bytes the piece that starts at `offset` holds. */
@@ -48,7 +44,7 @@ export function splitName(name: string): { stem: string; extension: string } {
 
 function shortenTo(stem: string, bytes: number): string {
   let kept = Array.from(stem);
-  while (kept.length > 1 && byteLength(kept.join("")) > bytes) kept = kept.slice(0, -1);
+  while (kept.length > 1 && nameBytes(kept.join("")) > bytes) kept = kept.slice(0, -1);
   return kept.join("");
 }
 
@@ -56,7 +52,7 @@ function shortenTo(stem: string, bytes: number): string {
 export function keepBothName(name: string, n: number): string {
   const { stem, extension } = splitName(name);
   const suffix = ` (${n})${extension}`;
-  return shortenTo(stem, NAME_MAX_BYTES - byteLength(suffix)) + suffix;
+  return shortenTo(stem, NAME_MAX_BYTES - nameBytes(suffix)) + suffix;
 }
 
 /**
