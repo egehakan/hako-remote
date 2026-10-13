@@ -34,6 +34,8 @@ const RETRY_MIN_MS = 500;
 const RETRY_MAX_MS = 8_000;
 /** How long a connection gets to prove it is alive after the page comes back to the foreground. */
 const WAKE_CHECK_MS = 4_000;
+/** Coming back to the page asks whether the login still stands, but not more often than this. */
+const SESSION_CHECK_MIN_MS = 5_000;
 
 class RelayConnection {
   private socket: WebSocket | null = null;
@@ -44,6 +46,7 @@ class RelayConnection {
   private pingTimer: number | undefined;
   private wakeTimer: number | undefined;
   private lastFrameAt = 0;
+  private sessionCheckedAt = 0;
   private nextRequestId = 1;
   private readonly pending = new Map<string, PendingRequest>();
   private readonly listeners = new Set<() => void>();
@@ -66,6 +69,7 @@ class RelayConnection {
     document.addEventListener("visibilitychange", this.onVisibilityChange);
     window.addEventListener("online", this.connectNow);
     window.addEventListener("pageshow", this.onVisibilityChange);
+    window.addEventListener("focus", this.onVisibilityChange);
     this.open();
   }
 
@@ -74,6 +78,7 @@ class RelayConnection {
     document.removeEventListener("visibilitychange", this.onVisibilityChange);
     window.removeEventListener("online", this.connectNow);
     window.removeEventListener("pageshow", this.onVisibilityChange);
+    window.removeEventListener("focus", this.onVisibilityChange);
     window.clearTimeout(this.retryTimer);
     this.dropSocket();
     this.set({ link: "idle", agent: null });
@@ -125,11 +130,9 @@ class RelayConnection {
     const socket = new WebSocket(`${scheme}//${location.host}/ws/client`);
     socket.binaryType = "arraybuffer";
     this.socket = socket;
-    let opened = false;
     this.set({ link: this.snapshot.link === "idle" ? "connecting" : this.snapshot.link });
 
     socket.onopen = () => {
-      opened = true;
       this.retryMs = RETRY_MIN_MS;
       this.lastFrameAt = Date.now();
       this.pingTimer = window.setInterval(this.heartbeat, PING_INTERVAL_MS);
@@ -150,8 +153,9 @@ class RelayConnection {
         return;
       }
       this.set({ link: "retrying", agent: null });
-      // A refused upgrade looks like any other failed connection, so ask whether we are logged in.
-      if (!opened) void this.checkSession();
+      // A refused upgrade looks like any other failed connection, and through a proxy it can even
+      // look like one that opened and dropped. So ask whether we are still logged in.
+      void this.checkSession();
       this.retryTimer = window.setTimeout(
         () => this.open(),
         this.retryMs * (0.75 + Math.random() / 2),
@@ -160,7 +164,13 @@ class RelayConnection {
     };
   }
 
+  /**
+   * Asks the relay over HTTP whether the login session still stands, and says so when it does not.
+   * The close code that announces an ended session only reaches a socket that is open, and a
+   * session can also be lost on this side alone, when the browser no longer has its cookie.
+   */
   private async checkSession(): Promise<void> {
+    this.sessionCheckedAt = Date.now();
     try {
       const response = await fetch("/api/me", { credentials: "same-origin" });
       if (response.status === 401 && this.wanted) this.onUnauthorized();
@@ -204,6 +214,8 @@ class RelayConnection {
   /** A phone suspends sockets in the background, so a returning page checks before trusting one. */
   private readonly onVisibilityChange = (): void => {
     if (document.visibilityState !== "visible" || !this.wanted) return;
+    // An open socket says nothing about the cookie, which another tab may have replaced.
+    if (Date.now() - this.sessionCheckedAt > SESSION_CHECK_MIN_MS) void this.checkSession();
     const socket = this.socket;
     if (!socket) {
       this.connectNow();

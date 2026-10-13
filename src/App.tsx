@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { BoxMark } from "@/components/box-mark";
-import { api } from "@/lib/api";
+import { api, setUnauthorizedHandler } from "@/lib/api";
 import { relay } from "@/lib/connection";
 import { clearFiles } from "@/lib/files/store";
 import { clearGit } from "@/lib/git/store";
@@ -41,6 +41,7 @@ export function App() {
   useEffect(() => {
     if (!signedIn) return;
     relay.onUnauthorized = signedOut;
+    setUnauthorizedHandler(signedOut);
     relay.start();
     notifications.start();
     return () => {

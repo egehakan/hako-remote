@@ -13,6 +13,16 @@ export type ApiError =
 
 export type ApiResult<T> = { ok: true; value: T } | { ok: false; error: ApiError };
 
+let onUnauthorized: () => void = () => {};
+
+/** Names who is told when the relay answers that there is no login session any more. */
+export function setUnauthorizedHandler(handler: () => void): void {
+  onUnauthorized = handler;
+}
+
+/** The routes whose 401 is an answer to the question asked, not the end of a session. */
+const ANONYMOUS_ROUTES = ["/api/login", "/api/me"];
+
 async function call<T>(path: string, body?: unknown): Promise<ApiResult<T>> {
   let response: Response;
   try {
@@ -40,7 +50,10 @@ async function call<T>(path: string, body?: unknown): Promise<ApiResult<T>> {
   if (code === "weak_password") {
     return { ok: false, error: { kind: "weak_password", message: String(data.message ?? "") } };
   }
-  if (response.status === 401) return { ok: false, error: { kind: "unauthorized" } };
+  if (response.status === 401) {
+    if (!ANONYMOUS_ROUTES.includes(path)) onUnauthorized();
+    return { ok: false, error: { kind: "unauthorized" } };
+  }
   const reason =
     typeof data?.reason === "string" && data.reason !== ""
       ? [data.status, data.reason].filter((part) => part != null).join(" ")
