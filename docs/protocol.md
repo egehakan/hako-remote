@@ -52,6 +52,12 @@ A text or binary frame larger than 8 MB closes the connection.
 | `POST /api/logout` | | `{ ok: true }`. Ends the session and clears the cookie. |
 | `GET /api/me` | | `{ email }` or 401 |
 | `POST /api/password` | `{ current, next }` | `{ ok: true }`. Changes the password and ends other sessions. `next` is 10 to 256 characters. |
+| `GET /api/push/key` | | `{ key }`: the relay's VAPID public key. See [Notifications](#notifications-sprint-6) for this route and the five below. |
+| `GET /api/push/device` | | `Device`: what the relay holds for the device of this login session. |
+| `POST /api/push/subscribe` | `{ endpoint, keys: { p256dh, auth }, muted?, kinds? }` | `Device`. Stores the browser's push subscription for this session. |
+| `POST /api/push/settings` | `{ muted?, kinds? }` | `Device`. Changes what this device is sent. |
+| `POST /api/push/unsubscribe` | | `{ ok: true }`. Forgets this session's subscription. |
+| `POST /api/push/test` | | `{ ok: true }` once the push service has taken a test notification for this device. |
 
 Bodies are JSON. A `POST` whose `Origin` header is not the app's own origin gets `403`. Errors are
 `{ error, ... }` with these statuses:
@@ -799,8 +805,233 @@ Mac.
 
 ### Notifications (sprint 6)
 
-Event `notify`: `{ kind: "agent_waiting" | "agent_done" | "command_done", title, body, session_id, tab_id }`.
-The relay turns it into a web push for every stored push subscription.
+The desktop app tells the owner's devices that a terminal wants them: a coding agent is waiting,
+a coding agent has finished, a long command has finished. It does so with one event, `notify`. The
+relay decides which of them go out, shows them to the clients that are open, and sends each as a
+[Web Push](https://www.rfc-editor.org/rfc/rfc8030) message to the devices that asked for
+notifications, where a tap opens that terminal.
+
+#### Event `notify` (agent to relay)
+
+```jsonc
+{
+  "t": "evt",
+  "event": "notify",
+  "data": {
+    "kind": "agent_waiting",
+    "title": "Claude Code needs your permission",
+    "body": "Allow Bash: pnpm test?\nfix login copy in hako-remote",
+    "session_id": "…",
+    "tab_id": "…"
+  }
+}
+```
+
+| Field | Type | Meaning and limits |
+|---|---|---|
+| `kind` | string | `agent_waiting`, `agent_done` or `command_done`. Required. |
+| `title` | string | One line of plain text, at most 100 characters. Required, and not empty. |
+| `body` | string | Plain text of at most 300 characters, which may hold line breaks (`LF`). May be `""`; a missing `body` counts as `""`. |
+| `session_id` | string | The terminal the notification is about: the `session_id` of its pane in `workspace.list`. Required, 1 to 255 bytes in UTF-8. |
+| `tab_id` | string or `null` | The `id` of the tab that holds that pane, at most 255 bytes. `null`, or leaving it out, means the agent does not know it. |
+
+- A character is a Unicode scalar value, which is what `chars().count()` counts in Rust.
+- **Plain text only.** `title` and `body` are shown as they are, on a lock screen among other
+  places: no HTML, no Markdown, no terminal escape sequences. The agent writes them for a person,
+  in the language of the app, and keeps them within the limits itself.
+- The text leaves the Mac, passes through the relay and through the push service of each device's
+  maker (encrypted for the device, see [the push message](#the-push-message)), and can be read on
+  a locked phone. The agent puts in what the terminal's title bar and the agent's status line
+  already show, and never the output of the terminal.
+- The agent gets no answer to a `notify`, as to any event.
+
+What the relay does to the text before using it, so that nothing a terminal printed can disturb a
+notification:
+
+- `title`: every control character (U+0000 to U+001F, U+007F to U+009F), the line and paragraph
+  separators (U+2028, U+2029) and the direction marks (U+200E, U+200F, U+202A to U+202E, U+2066 to
+  U+2069) becomes a space; every run of white space becomes one space; the ends are trimmed. A
+  title longer than 100 characters is cut to its first 99 and `…`.
+- `body`: `CR LF` and `CR` become `LF`; each line is cleaned as a title is; blank lines at the
+  start and the end are dropped, and several blank lines in a row become one. A body longer than
+  300 characters is cut to its first 299 and `…`.
+
+A `notify` is **dropped**, with a line in the relay's log, when its `data` is not an object, when
+`kind` is none of the three, when `session_id` is missing, not a string, empty or longer than 255
+bytes, or when `title` is not a string or is empty once cleaned. A `tab_id` that is not a string of
+1 to 255 bytes is read as `null`. So a newer desktop app may send a kind this relay does not know,
+and nothing happens.
+
+#### Kinds, and when the desktop app sends each
+
+| `kind` | Sent when |
+|---|---|
+| `agent_waiting` | The coding agent in a terminal starts waiting for the owner: it asks for a permission, asks a question, or has stopped and waits for the next instruction. This is the moment the pane's `agent.status` in `workspace.list` becomes `waiting`. While the status stays `waiting`, it is sent again only when the agent's `message` changes, which is a new question. |
+| `agent_done` | The pane's `agent.status` becomes `done` or `failed`. The title says which. |
+| `command_done` | A command the owner ran at the shell prompt of a terminal finishes after running for 30 seconds or longer, whatever its exit status. Thirty seconds is the default of a setting the desktop app may offer. Not sent for a command during which the pane reported an agent status (the agent's own events have said it), and not for a terminal in which the app cannot tell where a command begins and ends. |
+
+Rules for all three:
+
+- **The desktop app sends them whether or not anyone is listening.** It does not know whether a
+  client is connected, and it must not look at whether the owner is at the Mac, whether Hako is
+  the frontmost app, or whether that terminal is on screen. Whenever the event happens and the app
+  is connected to the relay, it sends the `notify`. Which devices hear about it is decided by the
+  relay and by each device's own switches.
+- One `notify` for each event. The agent need not hold back repeats: the relay collapses them
+  (below). It must not send a `notify` on a timer, as a reminder, or for a state that has not
+  changed.
+- When the app is not connected to the relay at that moment, it may keep the newest `notify` of
+  each session and send it after reconnecting if it is then no more than 60 seconds old. Older
+  ones are dropped; nothing is replayed.
+- For `agent_waiting` and `agent_done`, `workspace.list` already answers with the pane's new
+  `agent` when the `notify` is sent, and `workspace.changed` is sent as for any other change. The
+  two events may come in either order: a client reads the workspace again when it sees a `notify`,
+  so the list and the notification agree.
+- A `session_id` the workspace no longer lists is not an error. The notification is delivered, and
+  a tap on it ends in the workspace.
+
+The wording is the desktop app's. This is what the mock agent sends, and what the client is laid
+out for: a title that names who and what, and a body whose first line is the detail and whose
+second says where.
+
+| `kind` | `title` | `body` |
+|---|---|---|
+| `agent_waiting` | `Claude Code needs your permission`, `Claude Code has a question`, `Claude Code is waiting for you` | The agent's `message` (`Allow Bash: pnpm test?`), then a line `<tab title> in <folder name>`, or the tab's title alone outside a folder. |
+| `agent_done` | `Claude Code has finished`, `Claude Code failed` | The agent's `message`, then the same line. |
+| `command_done` | `<the command line> finished`, `<the command line> failed`, with a long command line cut by the app | `Took 2 min 14 s, exit status 0`, then the same line. |
+
+#### The collapse rule
+
+The relay lets through, for one session and one kind, at most one `notify` in any 5 seconds. With
+"delivered" meaning that it went on to the clients and the devices:
+
+1. A `notify` whose session and kind had none delivered in the last 5 seconds is delivered at
+   once. If one was being held for that session (rule 3), the held one is dropped: it is older.
+2. A `notify` that arrives within 5 seconds of the last delivered one of its session and kind, with
+   the same `title` and `body` as that one, is dropped.
+3. A `notify` that arrives within those 5 seconds with a different `title` or `body` is held. The
+   relay holds one `notify` for each session, the newest: a later one that has to wait replaces
+   it, whatever its kind. When the 5 seconds since the last delivered one of the held one's kind
+   are over, it is delivered, and its own 5 seconds begin.
+4. Different kinds do not hold each other back, and neither do different sessions:
+   `agent_waiting` followed a second later by `agent_done` for the same terminal are both
+   delivered at once.
+5. Over all sessions together the relay delivers at most 20 in any 60 seconds. What exceeds that
+   is dropped and logged.
+
+Time is the relay's, measured at arrival. Four `agent_waiting` for one terminal at 0 s, 0.3 s,
+0.6 s and 0.9 s with four different questions end as two notifications: the first at 0 s and the
+fourth at 5 s.
+
+On a device, every notification of a terminal carries the same `tag`, so a newer one takes the
+place of the older one instead of piling up: the `agent_done` of rule 4 replaces the
+`agent_waiting` before it.
+
+#### What the relay does with it
+
+1. It reads and cleans the event, or drops it, as described above.
+2. It applies the collapse rule.
+3. It sends what is delivered to **every connected client** as an event of the same name, with the
+   cleaned fields and nothing else: `{ kind, title, body, session_id, tab_id }`, where `tab_id` is
+   a string or `null`. Unlike other events from the agent, a `notify` reaches the clients only
+   through these three steps, never as the agent sent it.
+4. It sends it as a push message to **every stored subscription** whose login session is still
+   valid, that is not muted, and that has this kind switched on.
+
+The relay keeps no notification. One that is delivered while no client is connected is not shown
+to a client that connects later, and a device that is off gets, from its push service, the newest
+notification of each terminal that is less than 4 hours old.
+
+Sending never holds the relay up: step 4 only starts the requests. Each waits at most 10 seconds
+for the push service. A subscription the push service answers with `404` or `410` is removed. Any
+other failure is logged, with the push service's host name and a short hash that stands for the
+subscription, never its address or its keys, and is not tried again.
+
+#### The push message
+
+Each push is one HTTP `POST` to the subscription's `endpoint`, encrypted for that browser with
+`aes128gcm` ([RFC 8291](https://www.rfc-editor.org/rfc/rfc8291)) and signed with the relay's VAPID
+key ([RFC 8292](https://www.rfc-editor.org/rfc/rfc8292)). The push service sees the headers and
+the size; the text it carries can be read only by the device.
+
+| Header | Value |
+|---|---|
+| `TTL` | `14400`: the push service keeps the message for 4 hours for a device it cannot reach. |
+| `Urgency` | `high` for `agent_waiting`, `normal` for the other two. |
+| `Topic` | The first 32 characters of the base64url SHA-256 of `session_id`, so that a push service holding messages for an unreachable device keeps one for each terminal, the newest. |
+
+The decrypted payload is JSON:
+
+```ts
+type PushPayload = {
+  v: 1;
+  kind: "agent_waiting" | "agent_done" | "command_done" | "test";
+  title: string;
+  body: string;
+  session_id: string | null;   // null for a test
+  tab_id: string | null;
+  tag: string;                 // "hako:" + session_id, or "hako:test"
+};
+```
+
+It is at most 3,072 bytes; a `body` that would make it longer is cut further.
+
+The client's service worker (`/sw.js`) shows a notification for every push it receives, also for
+one it cannot read (an iPhone withdraws the permission from an app that receives pushes without
+showing anything), with the `tag` as the notification's tag. On a tap it focuses an open window of
+the app and tells it which terminal to show, or opens the app at `/#/t/<session_id>`. The app reads
+the workspace again and, when that terminal is gone, shows what its tab still holds if `tab_id`
+names a tab that is still open, and otherwise the workspace, with a line that says why. The worker
+answers no request and caches nothing.
+
+#### Devices: the push routes of the relay
+
+A device is one browser, or one home-screen app, that is logged in: the relay keeps at most one
+push subscription for each login session. All six routes need the session cookie (`401` without
+one) and, being under `/api`, a `POST` must come from the app's own origin (`403` otherwise).
+
+```ts
+type Kinds = { agent_waiting: boolean; agent_done: boolean; command_done: boolean };
+type Device =
+  | { subscribed: false }
+  | { subscribed: true; endpoint_id: string; muted: boolean; kinds: Kinds };
+```
+
+`endpoint_id` is the SHA-256 of the subscription's `endpoint` in lower-case hex. It lets a client
+see whether the relay holds the subscription its browser has, without the relay giving the address
+back.
+
+| Route | What it does |
+|---|---|
+| `GET /api/push/key` | `{ key }`: the VAPID public key, an uncompressed P-256 point in base64url without padding, which the client passes to `PushManager.subscribe` as `applicationServerKey`. |
+| `GET /api/push/device` | The `Device` of this session. |
+| `POST /api/push/subscribe` | Body: what `PushSubscription.toJSON()` gives, `{ endpoint, keys: { p256dh, auth } }`, with the optional `muted` (boolean) and `kinds` (any of the three, booleans) beside them. Stores it for this session in place of whatever the session had, and answers with the `Device`. With neither `muted` nor `kinds` the session's earlier preferences are kept; a first subscription starts unmuted with every kind on, and a kind left out of `kinds` is on. `endpoint` must be an `https:` address of at most 2,048 characters without a user name, `p256dh` must decode to 65 bytes that start with `0x04`, and `auth` to 16 bytes; anything else is `400 bad_request`. (A relay that is itself served without TLS, which is a development setup, also takes `http://localhost` and `http://127.0.0.1`.) |
+| `POST /api/push/settings` | Body: `{ muted?, kinds? }`. Changes the fields that are given and answers with the `Device`. `404 not_subscribed` when the session has no subscription; `400 bad_request` for a value that is not a boolean. |
+| `POST /api/push/unsubscribe` | Removes this session's subscription, if any. `{ ok: true }`. |
+| `POST /api/push/test` | Sends this device, and no other, a notification with `kind: "test"`, also when it is muted, and waits for the push service. `{ ok: true }` when the push service took it. `404 { error: "not_subscribed" }` without a subscription. `410 { error: "gone" }` when the push service said the subscription no longer exists, which has also removed it. `502 { error: "push_failed", status, reason }` for any other refusal, with the push service's status and the start of what it answered, or with `status: null` when it could not be reached. |
+
+A subscription is also removed when its session ends: at `POST /api/logout`, for every other
+session at `POST /api/password`, and when a session expires.
+
+The VAPID key pair is made on the relay's first start and kept in its database, so a relay needs
+no setting for notifications. `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY` in the environment, both
+in base64url, take its place when set. The contact the relay names to push services is
+`mailto:` and the owner's email address, or `VAPID_SUBJECT`. When the key changes, a client finds
+that its browser's subscription was made for another key and replaces it.
+
+#### What the client does
+
+- Each time the app opens with the permission granted, it brings three things into agreement
+  without asking anything: the browser's subscription (made if missing, remade if it belongs to
+  another key), the relay's copy of it (stored again if `GET /api/push/device` shows none, or
+  another `endpoint_id`), and the preferences. So a subscription the relay lost comes back by
+  itself.
+- The preferences (`muted`, `kinds`) belong to the device. The client keeps them, sends them with
+  a subscription, and changes them with `POST /api/push/settings`.
+- When a `notify` event arrives while the page is visible, the client shows it in a banner unless
+  the device is muted, has the kind off, or is already showing that terminal. The system's
+  notification arrives as well.
+- Logging out removes the relay's copy and then ends the browser's subscription.
 
 ## Versioning
 
