@@ -34,13 +34,23 @@ export function LoginScreen({ onLoggedIn }: { onLoggedIn: (email: string) => voi
 
   async function logIn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const data = new FormData(event.currentTarget);
+    const form = event.currentTarget;
+    const data = new FormData(form);
     setBusy(true);
     setError(null);
-    const result = await api.login(String(data.get("email") ?? ""), String(data.get("password") ?? ""));
+    const result = await api.login(
+      String(data.get("email") ?? ""),
+      String(data.get("password") ?? ""),
+    );
     setBusy(false);
-    if (result.ok) onLoggedIn(result.value.email);
-    else setError(result.error);
+    if (result.ok) {
+      onLoggedIn(result.value.email);
+      return;
+    }
+    setError(result.error);
+    if (result.error.kind === "invalid_credentials") {
+      form.querySelector<HTMLInputElement>("[name=password]")?.select();
+    }
   }
 
   const problem = error ? explain(error) : null;

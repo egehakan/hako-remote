@@ -45,7 +45,6 @@ export function Shell({ email, onLoggedOut }: ShellProps) {
 
   const openTab = useCallback((tab: Tab) => {
     setNotice(null);
-    navigate(routes.tab(tab.id));
     activateTab(tab.id).catch((failure) => setNotice(describeFailure(failure)));
   }, []);
 
@@ -94,7 +93,9 @@ export function Shell({ email, onLoggedOut }: ShellProps) {
             {notice || error ? (
               <Alert variant="destructive" className="mb-4">
                 <CircleAlertIcon />
-                <AlertDescription>{notice ?? "Couldn’t load the workspace from your Mac."}</AlertDescription>
+                <AlertDescription>
+                  {notice ?? "Couldn’t load the workspace from your Mac."}
+                </AlertDescription>
                 {notice ? (
                   <AlertAction>
                     <Button variant="ghost" size="sm" onClick={() => setNotice(null)}>

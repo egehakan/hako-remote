@@ -26,8 +26,11 @@ export function AccountScreen({ email, onLoggedOut }: { email: string; onLoggedO
     const current = String(data.get("current") ?? "");
     const next = String(data.get("next") ?? "");
     setChanged(false);
+    const focus = (name: "current" | "next") =>
+      form.querySelector<HTMLInputElement>(`[name=${name}]`)?.focus();
     if (next.length < MIN_PASSWORD_LENGTH) {
       setProblem({ field: "next", message: `Use at least ${MIN_PASSWORD_LENGTH} characters.` });
+      focus("next");
       return;
     }
     setBusy(true);
@@ -42,9 +45,11 @@ export function AccountScreen({ email, onLoggedOut }: { email: string; onLoggedO
     switch (result.error.kind) {
       case "invalid_credentials":
         setProblem({ field: "current", message: "That isn’t your current password." });
+        focus("current");
         break;
       case "weak_password":
         setProblem({ field: "next", message: result.error.message });
+        focus("next");
         break;
       case "locked":
         setProblem({
@@ -59,7 +64,10 @@ export function AccountScreen({ email, onLoggedOut }: { email: string; onLoggedO
         setProblem({ field: "form", message: "Can’t reach the server. Check your connection." });
         break;
       case "server":
-        setProblem({ field: "form", message: "The server couldn’t change the password. Try again." });
+        setProblem({
+          field: "form",
+          message: "The server couldn’t change the password. Try again.",
+        });
         break;
     }
   }
@@ -145,7 +153,11 @@ export function AccountScreen({ email, onLoggedOut }: { email: string; onLoggedO
           disabled={loggingOut}
           onClick={() => void logOut()}
         >
-          {loggingOut ? <Spinner data-icon="inline-start" /> : <LogOutIcon data-icon="inline-start" />}
+          {loggingOut ? (
+            <Spinner data-icon="inline-start" />
+          ) : (
+            <LogOutIcon data-icon="inline-start" />
+          )}
           Log out
         </Button>
       </div>

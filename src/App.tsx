@@ -23,7 +23,9 @@ export function App() {
     let cancelled = false;
     void api.me().then((result) => {
       if (cancelled) return;
-      setAuth(result.ok ? { state: "signed-in", email: result.value.email } : { state: "anonymous" });
+      setAuth(
+        result.ok ? { state: "signed-in", email: result.value.email } : { state: "anonymous" },
+      );
     });
     return () => {
       cancelled = true;
@@ -40,7 +42,11 @@ export function App() {
 
   if (auth.state === "checking") {
     return (
-      <div className="flex min-h-dvh items-center justify-center" aria-busy="true" aria-label="Loading">
+      <div
+        className="flex min-h-dvh items-center justify-center"
+        aria-busy="true"
+        aria-label="Loading…"
+      >
         <BoxMark state="seeking" className="h-14" />
       </div>
     );

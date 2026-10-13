@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { useWorkspaceActions } from "@/components/workspace-actions";
 import { relativeTo, tildify } from "@/lib/paths";
+import { routes } from "@/lib/route";
 import { cn } from "@/lib/utils";
 import { tabAgent } from "@/lib/workspace";
 
@@ -36,9 +37,16 @@ export function WorkspaceList({ windows, selectedTabId }: WorkspaceListProps) {
   );
 }
 
-function WindowContents({ window, selectedTabId }: { window: Window; selectedTabId: string | null }) {
+function WindowContents({
+  window,
+  selectedTabId,
+}: {
+  window: Window;
+  selectedTabId: string | null;
+}) {
   const loose = window.tabs.filter(
-    (tab) => tab.folder_id === null || !window.folders.some((folder) => folder.id === tab.folder_id),
+    (tab) =>
+      tab.folder_id === null || !window.folders.some((folder) => folder.id === tab.folder_id),
   );
   if (window.folders.length === 0 && loose.length === 0) {
     return <p className="px-1 text-sm text-muted-foreground">No tabs open in this window.</p>;
@@ -161,21 +169,26 @@ function TabRow({ tab, directory, front, selected }: TabRowProps) {
           className={cn("absolute inset-y-0 left-0 w-[3px]", front ? "bg-amber" : "bg-input")}
         />
       ) : null}
-      <button
-        type="button"
+      <a
+        href={routes.tab(tab.id)}
         aria-current={selected ? "page" : undefined}
-        className="flex min-h-14 min-w-0 flex-1 flex-col justify-center gap-0.5 py-2.5 pr-1 pl-4 text-left outline-none focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset"
+        className="flex min-h-14 min-w-0 flex-1 flex-col justify-center gap-0.5 py-2.5 pr-1 pl-4 outline-none hover:bg-accent/50 focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset"
         onClick={() => openTab(tab)}
       >
         <span className="flex items-center gap-2">
-          <span className={cn("truncate text-[0.9375rem] leading-5 font-medium", front && "text-lid")}>
+          <span
+            className={cn("truncate text-[0.9375rem] leading-5 font-medium", front && "text-lid")}
+          >
             {tab.title}
           </span>
           {front ? <span className="sr-only">(in front on your Mac)</span> : null}
           {agent ? <AgentBadge agent={agent} /> : null}
         </span>
         {cwd || others > 0 ? (
-          <span className="truncate font-mono text-xs leading-5 text-muted-foreground" translate="no">
+          <span
+            className="truncate font-mono text-xs leading-5 text-muted-foreground"
+            translate="no"
+          >
             {cwd}
             {others > 0 ? (
               <span>
@@ -189,7 +202,7 @@ function TabRow({ tab, directory, front, selected }: TabRowProps) {
             {agent.message}
           </span>
         ) : null}
-      </button>
+      </a>
       <Button
         variant="ghost"
         size="icon-touch"

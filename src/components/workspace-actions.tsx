@@ -6,6 +6,7 @@ export type WorkspaceActions = {
   canAct: boolean;
   /** The folder id a new tab is being opened in, `"loose"` for one outside folders, or null. */
   creatingIn: string | null;
+  /** Brings a tab to the front on the Mac. The link that calls it does the navigating. */
   openTab: (tab: Tab) => void;
   newTab: (folderId?: string) => void;
   askToClose: (tab: Tab) => void;

@@ -111,13 +111,18 @@
     @apply bg-background font-sans;
     -webkit-text-size-adjust: 100%;
     -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+
+  @media (pointer: fine) {
+    html {
+      overscroll-behavior: none;
+    }
   }
 
   body {
     @apply bg-background text-foreground antialiased;
     min-height: 100dvh;
-    overscroll-behavior-y: none;
-    font-feature-settings: "ss01";
   }
 
   button:not(:disabled),
