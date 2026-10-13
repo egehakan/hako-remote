@@ -802,11 +802,15 @@ is repeated twice before the transfer fails.
 |---|---|---|
 | `git.repos` | | `{ repos: Repo[] }` |
 | `git.status` | `{ repo }` | `{ repo: Repo, files: File[], truncated }` |
-| `git.diff` | `{ repo, path, old_path? }` | `Diff` |
+| `git.diff` | `{ repo, path, old_path?, commit? }` | `Diff` |
 | `git.commit` | `{ repo, message }` | `{ commit, output, repo: Repo }` |
 | `git.push` | `{ repo }` | `{ output, published, repo: Repo }` |
 | `git.pull` | `{ repo }` | `{ output, repo: Repo }` |
 | `git.discard` | `{ repo, path?, old_path? }` | `{ repo: Repo }` |
+| `git.branches` | `{ repo }` | `{ current, detached, head, branches: Branch[], truncated }` |
+| `git.switch` | `{ repo, branch, kind }` | `{ current, head }` |
+| `git.log` | `{ repo, limit, skip }` | `{ commits: Commit[], has_more, head, upstream }` |
+| `git.show` | `{ repo, commit }` | `{ commit: Commit, body, files: File[], truncated }` |
 
 ```ts
 type Repo = {
@@ -835,6 +839,26 @@ type Diff =
   | { kind: "text"; diff: string }
   | { kind: "binary"; old_size: number | null; new_size: number | null }
   | { kind: "too_large"; limit: number };
+type Branch = {
+  name: string;                 // "main" for a local branch, "origin/main" for a remote one
+  kind: "local" | "remote";
+  tip: string;                  // the full hash of the commit the branch points at
+  time: number;                 // the tip's committer time
+  subject: string;              // the tip's subject line, at most 200 characters
+  upstream: string | null;      // local only: the upstream's short name; null when there is none
+  ahead: number | null;         // local only: null when there is no upstream
+  behind: number | null;
+  worktree: string | null;      // local only: another working tree that has this branch checked out
+};
+type Commit = {
+  id: string;                   // the full hash
+  parents: string[];            // full hashes, in order
+  subject: string;              // at most 200 characters
+  author: string;               // the author's name
+  time: number;                 // the author time
+  refs: { name: string; kind: "head" | "local" | "remote" | "tag" }[];
+  side: "both" | "local" | "remote";
+};
 ```
 
 This is the desktop app's source control panel, from a phone: every repository under the owner's
@@ -867,9 +891,10 @@ printed is what the owner reads.
 - "Git's output" below means standard output and standard error together, in the order git wrote
   them as far as the agent can tell, decoded as UTF-8 with replacement characters, with white space
   trimmed from both ends, and cut to its last 16,384 bytes when it is longer.
-- One command at a time changes a repository. `git.commit`, `git.push`, `git.pull` and
-  `git.discard` for a `repo` that already has one of them running fail at once with `busy`; they
-  are not queued. `git.repos`, `git.status` and `git.diff` can be answered at any time.
+- One command at a time changes a repository. `git.commit`, `git.push`, `git.pull`,
+  `git.discard` and `git.switch` for a `repo` that already has one of them running fail at once
+  with `busy`; they are not queued. `git.repos`, `git.status`, `git.diff`, `git.branches`,
+  `git.log` and `git.show` can be answered at any time.
 
 #### `git.repos`
 
@@ -974,6 +999,11 @@ The diff of one file against `HEAD`. `path` is a file's `path` from `git.status`
   `deletions` from `git.status` instead.
 - Errors: `not_found` when `path` is neither in `HEAD` nor in the working tree, `failed` with a
   sentence when `path` is a directory, `git_failed` with git's output when git fails.
+- **In a commit.** `git.diff` takes an optional `commit`: `{ repo, path, old_path?, commit? }`.
+  Without it nothing changes. With it, the result is that file's change in that commit against its
+  first parent (or the empty tree), in the same three result kinds and size limit as today.
+  The client sends the full hash of a commit that `git.log` or `git.show` gave it, with the `path`
+  and `old_path` of a file that [`git.show`](#gitshow) listed for it.
 
 #### `git.commit`
 
@@ -1043,6 +1073,77 @@ does not ask again.
     result is the repository as it is.
 - Result: the repository afterwards. A status other than 0 is `git_failed` with git's output.
 
+#### Branches and history
+
+`git.branches`, `git.switch`, `git.log` and `git.show`, and the `commit` of `git.diff`, came after
+the methods above; a desktop app from before them answers `not_supported` for the four, and the
+client then offers neither the branch picker nor the graph while the rest keeps working.
+
+`repo` is the absolute working-tree path of a discovered repository, as for the existing methods;
+unknown repos answer `not_found`. Errors as the existing methods: `git_failed` with git's output
+(last 16 KiB), `busy`, `not_found`, `bad_request`, `failed`. Times are whole milliseconds since the
+epoch.
+
+#### `git.branches`
+
+`{ repo }` -> `{ current, detached, head, branches, truncated }`
+
+- `current`: the checked-out local branch name, or null when detached; `detached`: boolean;
+  `head`: the full hash of HEAD, or null in a repository with no commits.
+- `branches`: `Branch[]`, local branches first, then remote-tracking branches; within each group
+  newest tip first, ties by name. At most 500; `truncated` says whether more exist.
+- `Branch = { name, kind: "local" | "remote", tip, time, subject, upstream, ahead, behind, worktree }`:
+  `name` is `main` for local, `origin/main` for remote; `tip` the full hash; `time` the tip's
+  committer time; `subject` the tip's subject line (at most 200 characters); for local branches
+  `upstream` is the upstream's short name or null, `ahead`/`behind` are numbers or null when there
+  is no upstream, and `worktree` is the absolute path of another working tree that has this branch
+  checked out (null when none, and null for the working tree being asked about); for remote
+  branches `upstream`, `ahead`, `behind` and `worktree` are null.
+- Symbolic remote heads such as `origin/HEAD` are left out, and a remote branch is left out when a
+  local branch has it as its upstream.
+
+#### `git.switch`
+
+`{ repo, branch, kind }` -> `{ current, head }`
+
+- `kind: "local"` runs `git switch <branch>`; `kind: "remote"` (branch is `origin/feature`) runs
+  `git switch --track <branch>`; `kind: "new"` runs `git switch -c <branch>` from the current HEAD.
+- `branch` must pass `git check-ref-format --branch` (otherwise `bad_request`), and must never be
+  passed where git could read it as an option.
+- Never forced, never stashes, never discards: when git refuses (local changes would be
+  overwritten, the branch is checked out in another worktree, the name exists), the answer is
+  `git_failed` with git's message.
+- Uses the same per-repo `busy` guard as commit and push. `git.changed` for that repo follows a
+  successful switch.
+
+#### `git.log`
+
+`{ repo, limit, skip }` -> `{ commits, has_more, head, upstream }`
+
+- History the way VS Code's source control graph shows it by default: the commits reachable from
+  HEAD, plus those reachable from the current branch's upstream when it has one, newest first in an
+  order where a child always comes before its parents (`--topo-order`).
+- `limit` 1 to 200, default 50; `skip` 0 or more, default 0; `has_more` says whether older commits
+  remain. `head` and `upstream` are the full hashes of HEAD and of the upstream tip (null when
+  absent). An empty repository answers with no commits.
+- `Commit = { id, parents, subject, author, time, refs, side }`: `id` full hash; `parents` full
+  hashes in order; `subject` at most 200 characters; `author` the author name; `time` the author
+  time; `refs: { name, kind: "head" | "local" | "remote" | "tag" }[]` for refs pointing at this
+  commit (`head` is the entry for the current branch or the detached HEAD itself; `origin/HEAD` and
+  stash refs are left out); `side: "both" | "local" | "remote"`: reachable from HEAD and the
+  upstream, only from HEAD (not pushed yet), or only from the upstream (not pulled yet). Without an
+  upstream every commit is `"both"`.
+
+#### `git.show`
+
+`{ repo, commit }` -> `{ commit, body, files, truncated }`
+
+- `commit` is a full or abbreviated hash (hex, 4 to 64 characters; otherwise `bad_request`; unknown
+  gives `not_found`). The result's `commit` is a `Commit` as above, `body` the message after the
+  subject (at most 16 KiB), and `files` the files it changed against its first parent (against the
+  empty tree for a root commit) in the same `File` shape `git.status` uses, with renames detected,
+  capped at 2,000 with `truncated`.
+
 #### Operations that take long
 
 `git.commit` (hooks), `git.push` and `git.pull` (the network), and `git.discard` can outlast the 20
@@ -1052,6 +1153,9 @@ frame. The agent, for its part, does not let git run for ever: a command of thes
 still running after 240 seconds is stopped, and the answer is `git_failed` with what git printed up
 to then and a last line saying that it was stopped. So the agent always answers before the relay
 gives up.
+
+The client sends `timeout_ms: 60000` for `git.switch` and the default for `git.branches`,
+`git.log` and `git.show`.
 
 If the client's connection drops in the meantime, the relay forgets the request and the answer is
 lost, while the command runs on to its end on the Mac. The client then reads the outcome from the
@@ -1063,11 +1167,11 @@ sends a command again by itself.
 `{ repo }`, sent to all clients. `repo` is the `path` of a repository whose `Repo` or files may
 differ from what the agent last answered; `null`, or a missing `repo`, means that any of them may,
 or that the set of repositories itself changed. The client reads again whatever it is showing: the
-list, that repository's files, an open diff.
+list, that repository's files, its branches and its graph, an open diff.
 
 The event is optional. An agent that sends it does so at most once a second per repository, after
 each `git.commit`, `git.push`, `git.pull` and `git.discard` (failed ones included, since a failed
-pull changes files too), and, if it watches the working trees, when something changed them from
+pull changes files too), after a successful `git.switch`, and, if it watches the working trees, when something changed them from
 outside. A client must not depend on it: it also reads again when the screen is opened, when the
 owner asks, after each of its own commands, and when the page comes back to the foreground.
 
@@ -1078,9 +1182,9 @@ The source control methods add these codes to the ones under [Frames](#frames):
 | Code | Meaning |
 |---|---|
 | `git_failed` | Git ran and exited with a status other than 0, or was stopped. `message` is git's output as defined above, several lines of it, which the client shows as it is. |
-| `busy` | Another `git.commit`, `git.push`, `git.pull` or `git.discard` is still running in this repository. |
-| `not_found` | `repo` is not a working tree the agent lists, or `path` (for `git.diff`) names nothing. |
-| `bad_request` | A malformed `repo` or `path`, or an empty or oversized `message`. |
+| `busy` | Another `git.commit`, `git.push`, `git.pull`, `git.discard` or `git.switch` is still running in this repository. |
+| `not_found` | `repo` is not a working tree the agent lists, `path` (for `git.diff`) names nothing, or `commit` is not a commit of the repository. |
+| `bad_request` | A malformed `repo`, `path` or `commit`, an empty or oversized `message`, a `branch` that is not a branch name, or an unknown `kind`. |
 | `failed` | The agent could not do it and git was not the one to say why. `message` is a sentence for the owner. |
 
 A client that does not know a code treats it as `failed`. An agent without these methods answers
