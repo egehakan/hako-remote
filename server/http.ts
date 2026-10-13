@@ -26,7 +26,8 @@ export type AppDeps = {
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
   "connect-src 'self'",
-  "img-src 'self' data:",
+  // `blob:` is for a picture picked on the device, drawn to be scaled before it is attached.
+  "img-src 'self' data: blob:",
   "style-src 'self' 'unsafe-inline'",
   "font-src 'self'",
   "object-src 'none'",
