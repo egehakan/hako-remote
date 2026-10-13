@@ -23,13 +23,20 @@
 // MOCK_GIT=0 leaves those methods out, MOCK_GIT_EMPTY=1 answers that there are no repositories,
 // MOCK_GIT_DELAY_MS=1500 makes every answer slow, and MOCK_GIT_NETWORK_DELAY_MS=25000 makes push
 // and pull take longer than the relay waits for an ordinary request.
+//
+// A `notify` event is sent on demand: press w (an agent waits), d (an agent has finished), c (a long
+// command has finished) or b (four in a second, to see the relay collapse them) in this console,
+// or write one of those words to the file the mock agent names at start (MOCK_NOTIFY_FILE), with a
+// session id after it to choose the terminal: `echo "agent_waiting sess-0007" > <file>`.
 
 import { type ChildProcess, spawn } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
 import { encodeOutputFrame } from "../shared/frames.ts";
+import { isNotifyKind, type NotifyEvent, type NotifyKind } from "../shared/notify.ts";
 import {
   type AppInfo,
   type ErrorCode,
@@ -62,6 +69,8 @@ const DEFAULT_ROWS = 32;
 const SCROLLBACK_BYTES = 64 * 1024;
 const SHELL_SCROLLBACK_BYTES = 512 * 1024;
 const WORKSPACE_CHANGED_MIN_INTERVAL_MS = 500;
+const NOTIFY_FILE = process.env.MOCK_NOTIFY_FILE ?? join(tmpdir(), "hako-mock-notify");
+const NOTIFY_FILE_POLL_MS = 400;
 const CLOSE_REPLACED = 4001;
 
 if (AGENT_KEY === "") {
@@ -667,6 +676,152 @@ function handleFrame(text: string): void {
   else answer();
 }
 
+// Notifications
+
+type Sample = { title: string; message: string };
+
+/** `{agent}` stands for the name of the coding agent in the terminal. */
+const NOTIFY_SAMPLES: Record<NotifyKind, Sample[]> = {
+  agent_waiting: [
+    { title: "{agent} needs your permission", message: "Allow Bash: pnpm test --filter relay?" },
+    { title: "{agent} has a question", message: "Which of the two migrations should run first?" },
+    { title: "{agent} needs your permission", message: "Allow Edit: server/push.ts?" },
+    { title: "{agent} is waiting for you", message: "The plan is ready. Go ahead with it?" },
+  ],
+  agent_done: [
+    {
+      title: "{agent} has finished",
+      message: "Fixed the login copy and ran the tests: 118 passed",
+    },
+    { title: "{agent} has finished", message: "Deployed the preview and ran the smoke checks" },
+    { title: "{agent} has finished", message: "Renamed the module and updated its 14 imports" },
+  ],
+  command_done: [
+    { title: "cargo build --release finished", message: "Took 2 min 14 s, exit status 0" },
+    { title: "pnpm test failed", message: "Took 48 s, exit status 1" },
+    { title: "rsync -a photos/ nas:photos/ finished", message: "Took 6 min 2 s, exit status 0" },
+  ],
+};
+
+const NOTIFY_WORDS: Record<string, NotifyKind> = {
+  w: "agent_waiting",
+  waiting: "agent_waiting",
+  d: "agent_done",
+  done: "agent_done",
+  c: "command_done",
+  command: "command_done",
+};
+
+let notifyCount = 0;
+
+type OwnedTerminal = { window: Window; tab: Tab; pane: Pane; sessionId: string };
+
+function ownedTerminals(): OwnedTerminal[] {
+  const owned: OwnedTerminal[] = [];
+  for (const window of windows) {
+    for (const item of window.tabs) {
+      for (const pane of item.panes) {
+        if (pane.session_id !== null && terminals.has(pane.session_id)) {
+          owned.push({ window, tab: item, pane, sessionId: pane.session_id });
+        }
+      }
+    }
+  }
+  return owned;
+}
+
+/**
+ * Sends one `notify` for a terminal of this mock agent: the one named, or the next in turn. An
+ * agent's notification also sets the status the workspace list shows, as the desktop app does.
+ */
+function emitNotify(kind: NotifyKind, sessionId?: string, sample?: Sample): void {
+  const owned = ownedTerminals();
+  // A command finishes in a plain terminal; an agent reports from one that runs an agent.
+  const fitting = owned.filter((item) => (item.pane.agent === null) === (kind === "command_done"));
+  const candidates = fitting.length > 0 ? fitting : owned;
+  const target =
+    sessionId === undefined
+      ? candidates[notifyCount % Math.max(1, candidates.length)]
+      : owned.find((item) => item.sessionId === sessionId);
+  if (!target) {
+    console.log(
+      sessionId === undefined
+        ? "notify: no terminal to notify about"
+        : `notify: ${sessionId} is not a terminal of this mock agent`,
+    );
+    return;
+  }
+  const samples = NOTIFY_SAMPLES[kind];
+  const chosen = sample ?? samples[notifyCount % samples.length];
+  notifyCount += 1;
+  const agent = target.pane.agent?.name ?? "Claude Code";
+  const folder = target.window.folders.find((item) => item.id === target.tab.folder_id);
+  const where = folder ? `${target.tab.title} in ${folder.name}` : target.tab.title;
+  if (kind !== "command_done") {
+    target.pane.agent = {
+      name: agent,
+      status: kind === "agent_waiting" ? "waiting" : "done",
+      message: chosen.message,
+    };
+    workspaceChanged();
+  }
+  const event: NotifyEvent = {
+    kind,
+    title: chosen.title.replace("{agent}", agent),
+    body: `${chosen.message}\n${where}`,
+    session_id: target.sessionId,
+    tab_id: target.tab.id,
+  };
+  sendEvent("notify", event);
+  console.log(`notify: ${kind} for ${target.sessionId} (${where}): ${event.title}`);
+}
+
+/** Four notifications of one terminal within a second, which the relay turns into two. */
+function emitBurst(): void {
+  const target = ownedTerminals().find((item) => item.pane.agent !== null);
+  if (!target) return;
+  NOTIFY_SAMPLES.agent_waiting.forEach((sample, index) => {
+    setTimeout(() => emitNotify("agent_waiting", target.sessionId, sample), index * 300);
+  });
+}
+
+function notifyCommand(line: string): void {
+  const [word, sessionId] = line.trim().split(/\s+/);
+  if (!word) return;
+  if (word === "b" || word === "burst") {
+    emitBurst();
+    return;
+  }
+  const kind = isNotifyKind(word) ? word : NOTIFY_WORDS[word];
+  if (kind) emitNotify(kind, sessionId);
+  else console.log(`notify: "${word}" is not one of w, d, c, b or a kind's name`);
+}
+
+function watchNotifyControls(): void {
+  const poll = setInterval(() => {
+    if (!existsSync(NOTIFY_FILE)) return;
+    try {
+      const text = readFileSync(NOTIFY_FILE, "utf8");
+      rmSync(NOTIFY_FILE, { force: true });
+      for (const line of text.split("\n")) notifyCommand(line);
+    } catch (error) {
+      console.error(`notify: could not read ${NOTIFY_FILE}: ${(error as Error).message}`);
+    }
+  }, NOTIFY_FILE_POLL_MS);
+  poll.unref();
+
+  if (!process.stdin.isTTY) return;
+  // Single keys, so the terminal must hand them over as they are typed, Ctrl+C included.
+  process.stdin.setRawMode(true);
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (keys: string) => {
+    for (const key of keys) {
+      if (key === "\u0003") stop();
+      else if (key.trim() !== "") notifyCommand(key);
+    }
+  });
+}
+
 // Connection
 
 let backoffMs = 1000;
@@ -721,6 +876,8 @@ function stop(): void {
   // To a client this must look like a Mac that went offline, not like terminals that ended.
   for (const terminal of terminals.values()) terminal.abandon();
   removeFixture(HOME);
+  rmSync(NOTIFY_FILE, { force: true });
+  if (process.stdin.isTTY) process.stdin.setRawMode(false);
   connection?.close(1000);
   setTimeout(() => process.exit(0), 200);
 }
@@ -752,5 +909,10 @@ if (SHELL_ENABLED) {
     `exposing a REAL shell in ${shellHome()} to ${RELAY_URL}; stop this when you are done`,
   );
 }
+
+console.log(
+  `notifications: ${process.stdin.isTTY ? "press w (an agent waits), d (an agent has finished), c (a command has finished) or b (a burst) here, or " : ""}write agent_waiting, agent_done, command_done or burst to ${NOTIFY_FILE}`,
+);
+watchNotifyControls();
 
 connect();
