@@ -1,10 +1,20 @@
 import type { Tab } from "@shared/protocol";
 import { CircleAlertIcon, PlusIcon } from "lucide-react";
-import { lazy, Suspense, useCallback, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { CloseTabDialog } from "@/components/close-tab-dialog";
 import { LoadBoundary } from "@/components/load-boundary";
 import { MacHeader } from "@/components/mac-header";
 import { MacOffline } from "@/components/mac-offline";
+import { NotifyBanners } from "@/components/notify-banners";
 import { PrimaryNav } from "@/components/primary-nav";
 import { Alert, AlertAction, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -16,9 +26,10 @@ import { WorkspaceList } from "@/components/workspace-list";
 import { activateTab, closeTab, createTab } from "@/lib/actions";
 import { describeFailure } from "@/lib/errors";
 import { useConnection, useWorkspace } from "@/lib/hooks";
+import { arrivals, notifications } from "@/lib/notifications";
 import { type Area, areaOf, navigate, routes, useRoute } from "@/lib/route";
 import { cn } from "@/lib/utils";
-import { listTerminals } from "@/lib/workspace";
+import { findTab, listTerminals } from "@/lib/workspace";
 import { AccountScreen } from "@/screens/account";
 import { FilesArea } from "@/screens/files";
 import { SourceControlArea } from "@/screens/source-control";
@@ -38,7 +49,8 @@ type ShellProps = { email: string; onLoggedOut: () => void };
 export function Shell({ email, onLoggedOut }: ShellProps) {
   const route = useRoute();
   const { link, agent } = useConnection();
-  const { windows, error } = useWorkspace();
+  const { windows, error, loadedAt } = useWorkspace();
+  const arrival = useSyncExternalStore(arrivals.subscribe, arrivals.getSnapshot);
   const [notice, setNotice] = useState<string | null>(null);
   const [creatingIn, setCreatingIn] = useState<string | null>(null);
   const [closing, setClosing] = useState<Tab | null>(null);
@@ -96,6 +108,27 @@ export function Shell({ email, onLoggedOut }: ShellProps) {
   );
 
   const dismissNotice = useCallback(() => setNotice(null), []);
+
+  // A tapped notification opens its terminal. Once the Mac has listed its workspace again, a
+  // terminal that is no longer there gives way to what its tab still holds, or to the workspace.
+  useEffect(() => {
+    if (arrival === null || !online || windows === null || loadedAt < arrival.at) return;
+    arrivals.clear();
+    if (openSessionId !== arrival.sessionId) return;
+    if (listTerminals(windows).some((terminal) => terminal.sessionId === arrival.sessionId)) return;
+    const tab = arrival.tabId === null ? null : findTab(windows, arrival.tabId);
+    if (tab) {
+      navigate(routes.tab(tab.tab.id), { replace: true });
+    } else {
+      navigate(routes.workspace, { replace: true });
+      setNotice("The terminal that notification was about isn’t open any more.");
+    }
+  }, [arrival, online, windows, loadedAt, openSessionId]);
+
+  // Looking at a terminal answers its notification, so the one on the device can go.
+  useEffect(() => {
+    if (openSessionId !== null) void notifications.clearFor(openSessionId);
+  }, [openSessionId]);
 
   const actions = useMemo<WorkspaceActions>(
     () => ({ canAct: online, creatingIn, openTab, newTab, askToClose, notice, dismissNotice }),
@@ -201,6 +234,7 @@ export function Shell({ email, onLoggedOut }: ShellProps) {
           </div>
         )}
       </div>
+      <NotifyBanners />
       <CloseTabDialog
         tab={closing}
         open={closeOpen}
