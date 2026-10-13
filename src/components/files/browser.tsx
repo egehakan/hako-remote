@@ -4,17 +4,30 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   CircleAlertIcon,
+  EllipsisVerticalIcon,
   EyeIcon,
   EyeOffIcon,
   HouseIcon,
   RefreshCwIcon,
   SearchIcon,
   SquareTerminalIcon,
+  UploadIcon,
   XIcon,
 } from "lucide-react";
-import { memo, type ReactNode, useDeferredValue, useEffect, useMemo, useState } from "react";
+import {
+  memo,
+  type ReactNode,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { FileKindIcon } from "@/components/files/file-icon";
+import { FileMenu, type MenuFile } from "@/components/files/save-file";
 import { FsProblem, ListSkeleton } from "@/components/files/states";
+import { TransferTray } from "@/components/files/transfer-tray";
 import { VirtualList } from "@/components/files/virtual-list";
 import { FolderIcon } from "@/components/folder-icon";
 import { MacOffline } from "@/components/mac-offline";
@@ -26,6 +39,9 @@ import { filesPrefs, useFilesPrefs, useListing, useRoots } from "@/lib/files/sto
 import { useConnection, useWorkspace } from "@/lib/hooks";
 import { tildify } from "@/lib/paths";
 import { navigate, routes } from "@/lib/route";
+import { uploadFiles } from "@/lib/transfers/actions";
+import { NEEDS_NEWER_HAKO } from "@/lib/transfers/describe";
+import { useTransferSupport } from "@/lib/transfers/store";
 import { cn } from "@/lib/utils";
 
 const ROW_HEIGHT = 48;
@@ -214,6 +230,7 @@ function RootsList({ offline }: { offline: boolean }) {
           <ListSkeleton label="Loading your folders" />
         )}
       </main>
+      <TransferTray />
     </>
   );
 }
@@ -239,6 +256,14 @@ function DirectoryList({ path, selectedFile, offline }: DirectoryListProps) {
   const { showHidden } = useFilesPrefs();
   const [filter, setFilter] = useState("");
   const needle = useDeferredValue(filter).trim().toLowerCase();
+  const support = useTransferSupport();
+  const picker = useRef<HTMLInputElement>(null);
+  const [menu, setMenu] = useState<MenuFile | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const openMenu = useCallback((file: MenuFile) => {
+    setMenu(file);
+    setMenuOpen(true);
+  }, []);
 
   const root = rootFor(path, roots.data?.roots ?? []);
   const rootPath = root?.path ?? null;
@@ -371,9 +396,13 @@ function DirectoryList({ path, selectedFile, offline }: DirectoryListProps) {
       </BrowserHeader>
 
       {offline ? (
-        <main className="min-h-0 flex-1 overflow-y-auto">
-          <MacOffline />
-        </main>
+        <>
+          <main className="min-h-0 flex-1 overflow-y-auto">
+            <MacOffline />
+          </main>
+          {/* What was on its way waits here, and says so. */}
+          <TransferTray />
+        </>
       ) : data && error?.code !== "not_supported" ? (
         <>
           {error && !isFile ? <StaleNotice /> : null}
@@ -383,7 +412,12 @@ function DirectoryList({ path, selectedFile, offline }: DirectoryListProps) {
               rowHeight={ROW_HEIGHT}
               itemKey={(row) => row.entry.name}
               renderRow={(row) => (
-                <EntryRow entry={row.entry} path={row.path} selected={row.path === selectedFile} />
+                <EntryRow
+                  entry={row.entry}
+                  path={row.path}
+                  selected={row.path === selectedFile}
+                  onMenu={openMenu}
+                />
               )}
               scrollKey={path}
               resetKey={`${needle}\n${showHidden}`}
@@ -410,16 +444,47 @@ function DirectoryList({ path, selectedFile, offline }: DirectoryListProps) {
               )}
             </div>
           )}
-          <p
-            role="status"
-            className="shrink-0 border-t px-safe py-1.5 font-mono text-[0.6875rem] leading-4 text-faint"
-          >
-            {needle !== ""
-              ? `${formatCount(visible.length)} of ${formatCount(total)}`
-              : `${formatCount(total)} ${total === 1 ? "item" : "items"}`}
-            {!showHidden && hiddenCount > 0 ? `, ${formatCount(hiddenCount)} hidden` : ""}
-            {data.truncated ? ". Your Mac sent only the first 20,000." : ""}
-          </p>
+          <TransferTray />
+          <footer className="flex shrink-0 items-center gap-3 border-t py-1.5 pr-[max(0.5rem,env(safe-area-inset-right))] pl-[max(1rem,env(safe-area-inset-left))]">
+            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <p role="status" className="font-mono text-[0.6875rem] leading-4 text-faint">
+                {needle !== ""
+                  ? `${formatCount(visible.length)} of ${formatCount(total)}`
+                  : `${formatCount(total)} ${total === 1 ? "item" : "items"}`}
+                {!showHidden && hiddenCount > 0 ? `, ${formatCount(hiddenCount)} hidden` : ""}
+                {data.truncated ? ". Your Mac sent only the first 20,000." : ""}
+              </p>
+              {support.state === "no" ? (
+                <p className="text-[0.75rem] leading-4 text-muted-foreground">
+                  {NEEDS_NEWER_HAKO} The version running there can’t take or hand over files yet.
+                </p>
+              ) : null}
+            </div>
+            <Button
+              variant="secondary"
+              className="h-10 px-3.5"
+              disabled={support.state === "no"}
+              onClick={() => picker.current?.click()}
+            >
+              <UploadIcon data-icon="inline-start" />
+              Upload
+            </Button>
+            {/* No `accept`: an iPhone then offers its photo library, its camera and its files. */}
+            <input
+              ref={picker}
+              type="file"
+              multiple
+              tabIndex={-1}
+              aria-hidden="true"
+              className="sr-only"
+              onChange={(event) => {
+                uploadFiles(path, Array.from(event.target.files ?? []));
+                // Emptied so that picking the same file again is a change too.
+                event.target.value = "";
+              }}
+            />
+          </footer>
+          <FileMenu file={menu} open={menuOpen} onOpenChange={setMenuOpen} />
         </>
       ) : error && !isFile ? (
         <main className="min-h-0 flex-1 overflow-y-auto">
@@ -450,9 +515,14 @@ function DirectoryList({ path, selectedFile, offline }: DirectoryListProps) {
   );
 }
 
-type EntryRowProps = { entry: FsEntry; path: string; selected: boolean };
+type EntryRowProps = {
+  entry: FsEntry;
+  path: string;
+  selected: boolean;
+  onMenu: (file: MenuFile) => void;
+};
 
-const EntryRow = memo(function EntryRow({ entry, path, selected }: EntryRowProps) {
+const EntryRow = memo(function EntryRow({ entry, path, selected, onMenu }: EntryRowProps) {
   const directory = isDirectory(entry);
   const openable = directory || entry.kind === "file" || entry.target === "file";
   const hidden = entry.name.startsWith(".");
@@ -502,17 +572,37 @@ const EntryRow = memo(function EntryRow({ entry, path, selected }: EntryRowProps
       </div>
     );
   }
+  const link =
+    "outline-none hover:bg-accent/50 focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset";
+  if (directory) {
+    return (
+      <a href={routes.dir(path)} className={cn(layout, link)}>
+        {contents}
+      </a>
+    );
+  }
+  // A file's row ends in its menu, which stands where a folder's row has its chevron.
   return (
-    <a
-      href={directory ? routes.dir(path) : routes.file(path)}
-      aria-current={selected ? "page" : undefined}
-      className={cn(
-        layout,
-        "outline-none hover:bg-accent/50 focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset",
-        selected && "bg-accent",
-      )}
-    >
-      {contents}
-    </a>
+    <div className={cn("flex h-12 items-stretch", selected && "bg-accent")}>
+      <a
+        href={routes.file(path)}
+        aria-current={selected ? "page" : undefined}
+        className={cn(
+          "flex min-w-0 flex-1 items-center gap-3 pl-[max(1rem,env(safe-area-inset-left))]",
+          link,
+        )}
+      >
+        {contents}
+      </a>
+      <button
+        type="button"
+        aria-label={`More for ${entry.name}`}
+        aria-haspopup="dialog"
+        className="flex w-[calc(2.75rem+max(0px,env(safe-area-inset-right)-0.75rem))] shrink-0 items-center justify-center pr-[max(0px,env(safe-area-inset-right)-0.75rem)] text-faint outline-none hover:bg-accent/50 hover:text-foreground focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset"
+        onClick={() => onMenu({ path, name: entry.name, size: entry.size })}
+      >
+        <EllipsisVerticalIcon aria-hidden="true" className="size-4" />
+      </button>
+    </div>
   );
 });

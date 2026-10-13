@@ -6,6 +6,7 @@ import { clearFiles } from "@/lib/files/store";
 import { clearGit } from "@/lib/git/store";
 import { notifications } from "@/lib/notifications";
 import { navigate, routes } from "@/lib/route";
+import { clearTransfers } from "@/lib/transfers/store";
 import { workspaceStore } from "@/lib/workspace";
 import { LoginScreen } from "@/screens/login";
 import { Shell } from "@/screens/shell";
@@ -20,6 +21,7 @@ export function App() {
     workspaceStore.clear();
     clearFiles();
     clearGit();
+    clearTransfers();
     navigate(routes.workspace, { replace: true });
     setAuth({ state: "anonymous" });
   }, []);

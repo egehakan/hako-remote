@@ -3,6 +3,7 @@ import type { FsReadResult, FsWriteParams, FsWriteResult } from "@shared/protoco
 import {
   ChevronLeftIcon,
   CircleAlertIcon,
+  DownloadIcon,
   FileDigitIcon,
   PencilIcon,
   RefreshCwIcon,
@@ -16,10 +17,13 @@ import { DiscardDialog } from "@/components/files/discard-dialog";
 import { EditBar } from "@/components/files/edit-bar";
 import { FindBar } from "@/components/files/find-bar";
 import { ImageView } from "@/components/files/image-view";
+import { SAVE_LABEL, useSaving } from "@/components/files/save-file";
 import { FsProblem } from "@/components/files/states";
+import { TransferTray } from "@/components/files/transfer-tray";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
+  EmptyContent,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
@@ -45,8 +49,10 @@ import {
 } from "@/lib/files/store";
 import { useConnection, useWide } from "@/lib/hooks";
 import { tildify } from "@/lib/paths";
+import { IOS } from "@/lib/platform";
 import { navigate, type Route, routes, setNavigationBlocker } from "@/lib/route";
 import { isTouchDevice } from "@/lib/terminal/prefs";
+import { saveToDevice } from "@/lib/transfers/actions";
 import { useVisibleViewport } from "@/lib/terminal/viewport";
 import { cn } from "@/lib/utils";
 
@@ -92,6 +98,7 @@ export default function FileView({ path }: { path: string }) {
 
   const name = baseName(path);
   const directory = parentOf(path) ?? "/";
+  const [saveNotice, setSaveNotice] = useState<string | null>(null);
 
   if (loaded.state === "ready" && loaded.result.kind === "text") {
     return (
@@ -112,7 +119,17 @@ export default function FileView({ path }: { path: string }) {
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
-      <FileHeader name={name} directory={directory} />
+      <FileHeader name={name} directory={directory}>
+        {loaded.state === "ready" ? (
+          <SaveButton
+            path={path}
+            name={name}
+            size={loaded.result.size}
+            onUnavailable={setSaveNotice}
+          />
+        ) : null}
+      </FileHeader>
+      {saveNotice ? <SaveNotice text={saveNotice} onDismiss={() => setSaveNotice(null)} /> : null}
       {loaded.state === "loading" ? (
         link === "open" && agent?.online === false ? (
           <FileNotice
@@ -150,15 +167,82 @@ export default function FileView({ path }: { path: string }) {
           detail={`${name} is ${formatSize(loaded.result.size)}. ${
             loaded.result.limit > 2 * 1024 * 1024 ? "Pictures" : "Text files"
           } open up to ${formatSize(loaded.result.limit)}; open this one on your Mac.`}
-        />
+        >
+          <SaveOffer path={path} name={name} size={loaded.result.size} />
+        </FileNotice>
       ) : (
         <FileNotice
           icon={FileDigitIcon}
           title="Not a text file"
           detail={`${name} holds ${formatSize(loaded.result.size)} of binary data, or text that is not UTF-8, which can’t be shown or edited here.`}
-        />
+        >
+          <SaveOffer path={path} name={name} size={loaded.result.size} />
+        </FileNotice>
       )}
+      {/* Beside the list, the list shows the transfers. */}
+      <TransferTray className="wide:hidden" />
     </div>
+  );
+}
+
+type SaveProps = { path: string; name: string; size: number };
+
+/**
+ * The header's way to fetch the open file. While that cannot be done the button still answers a
+ * tap, with the reason, since a greyed-out icon on a phone explains nothing.
+ */
+function SaveButton({
+  path,
+  name,
+  size,
+  onUnavailable,
+}: SaveProps & { onUnavailable: (reason: string) => void }) {
+  const saving = useSaving(size);
+  return (
+    <Button
+      variant="ghost"
+      size="icon-touch"
+      className={cn("size-11", !saving.possible && "opacity-45")}
+      aria-label={SAVE_LABEL}
+      aria-disabled={!saving.possible}
+      title={saving.reason ?? SAVE_LABEL}
+      onClick={() => {
+        if (saving.possible) saveToDevice(path, name, size);
+        else if (saving.reason) onUnavailable(saving.reason);
+      }}
+    >
+      <DownloadIcon />
+    </Button>
+  );
+}
+
+/** The same, spelt out, for a file that cannot be shown: fetching it is all there is to do. */
+function SaveOffer({ path, name, size }: SaveProps) {
+  const saving = useSaving(size);
+  return (
+    <>
+      <Button
+        variant="secondary"
+        size="touch"
+        disabled={!saving.possible}
+        onClick={() => saveToDevice(path, name, size)}
+      >
+        <DownloadIcon data-icon="inline-start" />
+        {SAVE_LABEL}
+      </Button>
+      {saving.reason ? <p className="text-muted-foreground">{saving.reason}</p> : null}
+    </>
+  );
+}
+
+function SaveNotice({ text, onDismiss }: { text: string; onDismiss: () => void }) {
+  return (
+    <Banner tone="quiet" icon={DownloadIcon}>
+      <p>{text}</p>
+      <Button variant="ghost" className="mt-1 h-9 px-2.5" onClick={onDismiss}>
+        Dismiss
+      </Button>
+    </Banner>
   );
 }
 
@@ -208,11 +292,13 @@ type FileNoticeProps = {
   icon: React.ComponentType;
   title: string;
   detail: string;
+  /** What can still be done with the file. */
+  children?: React.ReactNode;
 };
 
-function FileNotice({ icon: Icon, title, detail }: FileNoticeProps) {
+function FileNotice({ icon: Icon, title, detail, children }: FileNoticeProps) {
   return (
-    <Empty className="py-14">
+    <Empty className="min-h-0 py-14">
       <EmptyHeader>
         <EmptyMedia variant="icon">
           <Icon />
@@ -220,6 +306,7 @@ function FileNotice({ icon: Icon, title, detail }: FileNoticeProps) {
         <EmptyTitle>{title}</EmptyTitle>
         <EmptyDescription>{detail}</EmptyDescription>
       </EmptyHeader>
+      {children ? <EmptyContent>{children}</EmptyContent> : null}
     </Empty>
   );
 }
@@ -284,10 +371,6 @@ function saveFailure(outcome: Extract<SaveOutcome, { kind: "failed" }>): string 
   }
 }
 
-const IOS =
-  /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-  (navigator.userAgent.includes("Macintosh") && navigator.maxTouchPoints > 1);
-
 const writeFile = (params: FsWriteParams) => relay.request<FsWriteResult>("fs.write", params);
 
 type TextFileProps = {
@@ -335,6 +418,7 @@ function TextFile({
   const [conflict, setConflict] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [finding, setFinding] = useState(false);
+  const [saveNotice, setSaveNotice] = useState<string | null>(null);
   const [rendered, setRendered] = useState<string | null>(null);
   /** Where the owner was going when unsaved text stopped them: an address, or out of edit mode. */
   const [leaving, setLeaving] = useState<{ to: string | null } | null>(null);
@@ -510,16 +594,19 @@ function TextFile({
             </Button>
           </>
         ) : (
-          <Button
-            variant="ghost"
-            size="icon-touch"
-            className="size-11"
-            aria-label="Edit this file"
-            disabled={!editor}
-            onClick={startEditing}
-          >
-            <PencilIcon />
-          </Button>
+          <>
+            <SaveButton path={path} name={name} size={bytes} onUnavailable={setSaveNotice} />
+            <Button
+              variant="ghost"
+              size="icon-touch"
+              className="size-11"
+              aria-label="Edit this file"
+              disabled={!editor}
+              onClick={startEditing}
+            >
+              <PencilIcon />
+            </Button>
+          </>
         )}
       </FileHeader>
 
@@ -617,6 +704,9 @@ function TextFile({
           </Button>
         </Banner>
       ) : null}
+      {saveNotice && !editing ? (
+        <SaveNotice text={saveNotice} onDismiss={() => setSaveNotice(null)} />
+      ) : null}
       {finding && editor && rendered === null ? (
         <FindBar editor={editor} onClose={() => setFinding(false)} />
       ) : null}
@@ -636,6 +726,7 @@ function TextFile({
         ) : null}
       </div>
 
+      <TransferTray className="wide:hidden" />
       {editing && touch && editor ? <EditBar editor={editor} keyboardOpen={keyboardOpen} /> : null}
 
       <DiscardDialog
