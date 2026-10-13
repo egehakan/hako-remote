@@ -81,7 +81,7 @@ export function AccountScreen({ email, onLoggedOut }: { email: string; onLoggedO
   return (
     <>
       <DetailHeader title="Account" />
-      <div className="flex max-w-md flex-col gap-8 px-safe py-6 md:px-6">
+      <div className="flex max-w-md flex-col gap-8 px-safe py-6 wide:px-6">
         <div>
           <p className="text-sm text-muted-foreground">Signed in as</p>
           <p className="font-medium break-all">{email}</p>

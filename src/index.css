@@ -7,6 +7,11 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Room for the workspace list beside a detail view: a tablet or a desktop window, but not a phone
+   turned on its side, which is wide and far too short. */
+@custom-variant wide (@media (min-width: 48rem) and (min-height: 30rem));
+@custom-variant narrow (@media not ((min-width: 48rem) and (min-height: 30rem)));
+
 @theme inline {
   --font-sans: "Schibsted Grotesk Variable", ui-sans-serif, system-ui, sans-serif;
   --font-heading: var(--font-sans);
@@ -99,6 +104,11 @@
 
   --radius: 0.5rem;
 
+  /* The visible part of the page. The terminal screen keeps these current while it is open, so
+     that an on-screen keyboard, which covers the page without resizing it, does not hide its keys. */
+  --vv-height: 100dvh;
+  --vv-top: 0px;
+
   color-scheme: dark;
 }
 
@@ -133,6 +143,21 @@
   ::selection {
     background: color-mix(in oklab, var(--amber) 35%, transparent);
   }
+}
+
+/* The terminal is drawn by xterm.js; these fit it into the app. */
+.terminal-host {
+  transform-origin: 0 0;
+}
+
+.terminal-host .xterm {
+  /* A mouse selects in the terminal as in any other; the page's amber selection is for text. */
+  cursor: text;
+}
+
+/* A touch screen scrolls the terminal with a finger, so its scrollbar would only take room. */
+.terminal-host-touch .xterm .scrollbar {
+  display: none;
 }
 
 @utility pt-safe {

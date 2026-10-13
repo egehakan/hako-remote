@@ -1,6 +1,6 @@
 import type { Tab } from "@shared/protocol";
 import { CircleAlertIcon, PlusIcon } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useMemo, useState } from "react";
 import { BoxMark } from "@/components/box-mark";
 import { CloseTabDialog } from "@/components/close-tab-dialog";
 import { MacHeader } from "@/components/mac-header";
@@ -22,8 +22,12 @@ import { describeFailure } from "@/lib/errors";
 import { useConnection, useWorkspace } from "@/lib/hooks";
 import { navigate, routes, useRoute } from "@/lib/route";
 import { cn } from "@/lib/utils";
+import { listTerminals } from "@/lib/workspace";
 import { AccountScreen } from "@/screens/account";
 import { TabDetail } from "@/screens/tab-detail";
+
+// The terminal brings xterm.js with it, which the login and the workspace list do not need.
+const TerminalScreen = lazy(() => import("@/screens/terminal"));
 
 const LOOSE = "loose";
 
@@ -41,7 +45,13 @@ export function Shell({ email, onLoggedOut }: ShellProps) {
 
   const online = link === "open" && agent?.online === true;
   const offline = link === "open" && agent?.online === false;
-  const selectedTabId = route.name === "tab" ? route.tabId : null;
+  const openSessionId = route.name === "terminal" ? route.sessionId : null;
+  const selectedTabId = useMemo(() => {
+    if (route.name === "tab") return route.tabId;
+    if (openSessionId === null) return null;
+    const open = listTerminals(windows).find((terminal) => terminal.sessionId === openSessionId);
+    return open?.tab.id ?? null;
+  }, [route, openSessionId, windows]);
 
   const openTab = useCallback((tab: Tab) => {
     setNotice(null);
@@ -52,7 +62,8 @@ export function Shell({ email, onLoggedOut }: ShellProps) {
     setNotice(null);
     setCreatingIn(folderId ?? LOOSE);
     try {
-      navigate(routes.tab(await createTab(folderId)));
+      // Straight into the new terminal: that is what it was opened for.
+      navigate(routes.terminal((await createTab(folderId)).session_id));
     } catch (failure) {
       setNotice(describeFailure(failure));
     } finally {
@@ -79,15 +90,25 @@ export function Shell({ email, onLoggedOut }: ShellProps) {
     [selectedTabId],
   );
 
+  const dismissNotice = useCallback(() => setNotice(null), []);
+
   const actions = useMemo<WorkspaceActions>(
-    () => ({ canAct: online, creatingIn, openTab, newTab, askToClose }),
-    [online, creatingIn, openTab, newTab, askToClose],
+    () => ({ canAct: online, creatingIn, openTab, newTab, askToClose, notice, dismissNotice }),
+    [online, creatingIn, openTab, newTab, askToClose, notice, dismissNotice],
   );
 
   return (
     <WorkspaceActionsContext value={actions}>
-      <div className="mx-auto h-dvh max-w-6xl md:grid md:grid-cols-[minmax(22rem,26rem)_1fr]">
-        <div className={cn("flex h-dvh flex-col", route.name !== "workspace" && "max-md:hidden")}>
+      <div
+        className={cn(
+          "mx-auto h-dvh wide:grid",
+          // A terminal takes all the width there is; the other views read better in a column.
+          openSessionId === null
+            ? "max-w-6xl wide:grid-cols-[minmax(22rem,26rem)_1fr]"
+            : "wide:grid-cols-[minmax(18rem,22rem)_minmax(0,1fr)]",
+        )}
+      >
+        <div className={cn("flex h-dvh flex-col", route.name !== "workspace" && "narrow:hidden")}>
           <MacHeader />
           <main className="flex-1 overflow-y-auto overscroll-contain px-safe py-4">
             {notice || error ? (
@@ -98,7 +119,7 @@ export function Shell({ email, onLoggedOut }: ShellProps) {
                 </AlertDescription>
                 {notice ? (
                   <AlertAction>
-                    <Button variant="ghost" size="sm" onClick={() => setNotice(null)}>
+                    <Button variant="ghost" size="sm" onClick={dismissNotice}>
                       Dismiss
                     </Button>
                   </AlertAction>
@@ -138,11 +159,19 @@ export function Shell({ email, onLoggedOut }: ShellProps) {
 
         <div
           className={cn(
-            "h-dvh overflow-y-auto overscroll-contain md:border-l",
-            route.name === "workspace" && "max-md:hidden",
+            "wide:border-l",
+            // On a phone the terminal follows the visible part of the page, above the keyboard.
+            openSessionId === null
+              ? "h-dvh overflow-y-auto overscroll-contain"
+              : "h-(--vv-height) overflow-hidden narrow:fixed narrow:inset-x-0 narrow:top-(--vv-top)",
+            route.name === "workspace" && "narrow:hidden",
           )}
         >
-          {route.name === "tab" ? (
+          {route.name === "terminal" ? (
+            <Suspense fallback={<TerminalLoading />}>
+              <TerminalScreen key={route.sessionId} sessionId={route.sessionId} />
+            </Suspense>
+          ) : route.name === "tab" ? (
             <TabDetail tabId={route.tabId} />
           ) : route.name === "account" ? (
             <AccountScreen email={email} onLoggedOut={onLoggedOut} />
@@ -188,13 +217,21 @@ function WorkspaceSkeleton() {
   );
 }
 
+function TerminalLoading() {
+  return (
+    <div className="flex h-full items-center justify-center" aria-busy="true" aria-label="Loading…">
+      <Spinner />
+    </div>
+  );
+}
+
 function NothingSelected() {
   return (
     <Empty className="h-full">
       <EmptyHeader>
         <EmptyTitle>Pick a tab</EmptyTitle>
         <EmptyDescription>
-          Choosing a tab brings it to the front on your Mac and shows its terminals here.
+          Choosing a tab brings it to the front on your Mac and opens its terminal here.
         </EmptyDescription>
       </EmptyHeader>
     </Empty>

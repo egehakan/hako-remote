@@ -8,7 +8,7 @@ import { useWorkspaceActions } from "@/components/workspace-actions";
 import { relativeTo, tildify } from "@/lib/paths";
 import { routes } from "@/lib/route";
 import { cn } from "@/lib/utils";
-import { tabAgent } from "@/lib/workspace";
+import { leadTerminal, tabAgent } from "@/lib/workspace";
 
 type WorkspaceListProps = {
   windows: Window[];
@@ -156,8 +156,7 @@ type TabRowProps = {
 function TabRow({ tab, directory, front, selected }: TabRowProps) {
   const { canAct, openTab, askToClose } = useWorkspaceActions();
   const agent = tabAgent(tab);
-  const terminals = tab.panes.filter((pane) => pane.kind === "terminal");
-  const lead = terminals.find((pane) => pane.focused) ?? terminals[0];
+  const lead = leadTerminal(tab);
   const cwd = lead?.cwd ? (directory ? relativeTo(directory, lead.cwd) : tildify(lead.cwd)) : null;
   const others = tab.panes.length - 1;
 
@@ -170,7 +169,8 @@ function TabRow({ tab, directory, front, selected }: TabRowProps) {
         />
       ) : null}
       <a
-        href={routes.tab(tab.id)}
+        // A tab opens on its terminal; one without a terminal has only its details to show.
+        href={lead?.session_id ? routes.terminal(lead.session_id) : routes.tab(tab.id)}
         aria-current={selected ? "page" : undefined}
         className="flex min-h-14 min-w-0 flex-1 flex-col justify-center gap-0.5 py-2.5 pr-1 pl-4 outline-none hover:bg-accent/50 focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset"
         onClick={() => openTab(tab)}

@@ -10,6 +10,9 @@ export type WorkspaceActions = {
   openTab: (tab: Tab) => void;
   newTab: (folderId?: string) => void;
   askToClose: (tab: Tab) => void;
+  /** What went wrong with the last action, in words for the owner, until it is dismissed. */
+  notice: string | null;
+  dismissNotice: () => void;
 };
 
 export const WorkspaceActionsContext = createContext<WorkspaceActions | null>(null);

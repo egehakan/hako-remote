@@ -72,6 +72,41 @@ export function findTab(windows: Window[] | null, tabId: string): TabLocation | 
   return null;
 }
 
+export type TerminalLocation = TabLocation & { pane: Pane; sessionId: string };
+
+/** Every terminal on the Mac, in the order the workspace list shows them. */
+export function listTerminals(windows: Window[] | null): TerminalLocation[] {
+  const terminals: TerminalLocation[] = [];
+  for (const window of windows ?? []) {
+    // The list shows a window's folders first and its loose tabs after them.
+    const inFolder = (tab: Tab) =>
+      window.folders.findIndex((folder) => folder.id === tab.folder_id);
+    const ordered = [
+      ...window.folders.flatMap((folder) =>
+        window.tabs.filter((tab) => tab.folder_id === folder.id),
+      ),
+      ...window.tabs.filter((tab) => inFolder(tab) === -1),
+    ];
+    for (const tab of ordered) {
+      const folder = window.folders.find((candidate) => candidate.id === tab.folder_id) ?? null;
+      for (const pane of tab.panes) {
+        if (pane.kind === "terminal" && pane.session_id !== null) {
+          terminals.push({ window, tab, folder, pane, sessionId: pane.session_id });
+        }
+      }
+    }
+  }
+  return terminals;
+}
+
+/** The terminal a tab opens with: the focused one, or else its first. */
+export function leadTerminal(tab: Tab): Pane | null {
+  const terminals = tab.panes.filter(
+    (pane) => pane.kind === "terminal" && pane.session_id !== null,
+  );
+  return terminals.find((pane) => pane.focused) ?? terminals[0] ?? null;
+}
+
 const ATTENTION_ORDER = ["waiting", "failed", "working", "done"] as const;
 
 /** The agent state that most needs the owner's eye among a tab's panes, if any. */

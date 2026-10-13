@@ -6,11 +6,11 @@ import { routes } from "@/lib/route";
 /** The bar over a detail view. On a phone it carries the way back to the workspace. */
 export function DetailHeader({ title, children }: { title: string; children?: ReactNode }) {
   return (
-    <header className="sticky top-0 z-10 flex items-center gap-1 border-b bg-background/95 pt-safe pr-[max(1rem,env(safe-area-inset-right))] pl-[max(0.25rem,env(safe-area-inset-left))] backdrop-blur md:pl-5">
+    <header className="sticky top-0 z-10 flex items-center gap-1 border-b bg-background/95 pt-safe pr-[max(1rem,env(safe-area-inset-right))] pl-[max(0.25rem,env(safe-area-inset-left))] backdrop-blur wide:pl-5">
       <Button
         variant="ghost"
         size="icon-touch"
-        className="md:hidden"
+        className="wide:hidden"
         aria-label="Back to the workspace"
         nativeButton={false}
         render={<a href={routes.workspace} />}
