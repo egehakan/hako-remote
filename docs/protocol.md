@@ -120,8 +120,9 @@ The relay also sends the agent requests of its own. Their ids start with `relay:
 answers them like any other request.
 
 Error codes: `agent_offline`, `timeout`, `bad_request`, `not_found`, `not_supported`, `failed`. The file
-methods add a few of their own, listed under [Files](#files-sprint-4), and so do the source control
-methods, listed under [Source control](#source-control-sprint-5).
+methods add a few of their own, listed under [Files](#files-sprint-4), which the transfer methods
+use too ([Transfers](#transfers-sprint-7)), and so do the source control methods, listed under
+[Source control](#source-control-sprint-5).
 
 ### Terminal output frame (binary, agent -> relay -> subscribed clients)
 
@@ -362,9 +363,11 @@ type ReadResult =
 ```
 
 These methods read and change files on the Mac as the user Hako runs as. They are not confined to
-the roots: any path that user can reach is served, since the same client already has a shell. This
-version reads directories and files and rewrites existing files. It does not create, rename, move or
-delete anything, and it sends no event when a file changes on the Mac: the client asks again.
+the roots: any path that user can reach is served, since the same client already has a shell. These
+four read directories and files and rewrite existing files. They do not create, rename, move or
+delete anything, and no event is sent when a file changes on the Mac: the client asks again. Whole
+files of any kind, in either direction, and new files, are what [Transfers](#transfers-sprint-7)
+are for.
 
 #### Paths
 
@@ -501,8 +504,8 @@ The file methods add these codes to the ones under [Frames](#frames):
 | `not_a_directory` | `fs.list` of something that is not a directory. |
 | `is_a_directory` | `fs.read` or `fs.write` of a directory. |
 | `permission_denied` | The Mac refused: the operating system's `EACCES` or `EPERM`, or a macOS privacy rule. |
-| `conflict` | `fs.write` only: the file's `mtime` is not `expected_mtime`. |
-| `too_large` | `fs.write` only: `content` is over the limit. (`fs.read` reports a large file as a result, not as an error.) |
+| `conflict` | `fs.write`: the file's `mtime` is not `expected_mtime`. |
+| `too_large` | `fs.write`: `content` is over the limit. (`fs.read` reports a large file as a result, not as an error.) |
 | `bad_request` | A malformed path or a missing or mistyped parameter. |
 | `failed` | Anything else. |
 
@@ -511,6 +514,261 @@ The file methods add these codes to the ones under [Frames](#frames):
 that does not know a code treats it as `failed`. An agent without these methods answers
 `not_supported`, as for any unknown method, and the client tells the owner to update Hako on the
 Mac.
+
+### Transfers (sprint 7)
+
+| Method | Params | Result |
+|---|---|---|
+| `fs.transfer_info` | | `{ max_bytes, chunk_bytes }` |
+| `fs.download` | `{ path, offset, length, expected_size, expected_mtime }` | `{ data, size, mtime }` |
+| `fs.upload_begin` | `{ destination, name, size, on_conflict }` | `{ upload_id }` |
+| `fs.upload_chunk` | `{ upload_id, offset, data }` | `{ received }` |
+| `fs.upload_end` | `{ upload_id }` | `{ path, name, size, mtime }` |
+| `fs.upload_cancel` | `{ upload_id }` | `{}` |
+
+```ts
+type Destination =
+  | { kind: "dir"; path: string }   // a directory on the Mac
+  | { kind: "uploads" };            // the app's own uploads area
+type OnConflict = "fail" | "replace" | "rename";
+```
+
+These move whole files between the client's device and the Mac: a download of any regular file,
+an upload of a new file into a directory, and an upload into the app's own uploads area, which is
+how a picture taken on the phone reaches a program in a terminal. A file travels in pieces through
+ordinary request and response frames, each piece as base64 in a JSON string. There is no other
+channel and the relay knows nothing of it: it forwards these six methods like any other.
+
+Paths, sizes and `mtime` are as under [Files](#files-sprint-4), and so is whom these methods act
+as: the user Hako runs as, with no confinement to the roots.
+
+#### Limits
+
+| | Value |
+|---|---|
+| Largest file, either direction (`max_bytes`) | 50 MiB: 52,428,800 bytes |
+| Most bytes in one piece, before base64 (`chunk_bytes`) | 1 MiB: 1,048,576 bytes |
+| Largest frame a piece makes | about 1.4 MB, against the relay's 8 MB |
+| An unfinished upload is kept | 15 minutes after the last request that named it |
+| The result of a finished upload is kept | 10 minutes |
+| A file stays in the uploads area | 7 days |
+
+`fs.transfer_info` answers with the first two as the agent has them. In this version they are the
+numbers above, and an agent must not report a `chunk_bytes` over 4,194,304. The client takes both
+from this answer: it refuses a larger file before sending or asking for anything, asks for pieces
+of exactly `chunk_bytes` (the last one shorter), and sends pieces of exactly that size.
+
+`fs.transfer_info` is also how the client learns that the agent has these methods at all. It asks
+once each time the Mac comes online. `not_supported` means an older app: the client then offers
+neither downloads, uploads nor attaching pictures, and says to update Hako on the Mac, instead of
+starting a transfer that fails half-way.
+
+`data` is base64 in the standard alphabet with `=` padding and without line breaks, as in
+`fs.read`. Anything else in an `fs.upload_chunk` is `bad_request`.
+
+The client sends `fs.download`, `fs.upload_chunk` and `fs.upload_end` with `timeout_ms: 60000`
+(see [Frames](#frames)), since a piece can take a while on a slow link and placing a file can take
+a moment on a slow disk. The other three use the relay's 20 seconds.
+
+#### `fs.download`
+
+Reads one piece of a file. The agent keeps nothing between two calls: every call names the file
+and says which bytes it wants.
+
+- `path` names a regular file, through symbolic links as the operating system follows them.
+- `offset` and `length` are whole numbers of bytes: `offset` from 0 up to the file's size,
+  `length` from 1 up to `chunk_bytes`. The answer's `data` holds the bytes from `offset` up to
+  `offset + length`, or up to the end of the file when that comes first. So an `offset` equal to
+  the size, which is also the first and only piece of an empty file, gives `data: ""`. An `offset`
+  beyond the size, a `length` out of range, or a number that is not a whole number, is
+  `bad_request`.
+- `size` and `mtime` describe the file as it was when the piece was read.
+- `expected_size` and `expected_mtime` must both be present, and are both `null` or both numbers;
+  anything else is `bad_request`. With `null` the agent answers for the file as it is. With
+  numbers, it compares them with the file's size and `mtime` now, and when either differs it reads
+  nothing and answers `conflict`: the file was written to since the client's first piece. The
+  agent also answers `conflict` when the file changes while it is reading the piece, which it
+  sees as a short read or as a size or `mtime` that differ after the read from before it.
+- A file larger than `max_bytes` is `too_large`, at every piece, whatever was asked for.
+- Other errors: `not_found`, `is_a_directory`, `permission_denied`, and `failed` for something
+  that is neither a directory nor a regular file.
+
+The client asks for the first piece with `offset: 0`, `length: chunk_bytes` and both expectations
+`null`, takes `size` and `mtime` from the answer, and asks for each further piece with those two
+as its expectations, one request at a time, in order, until it has `size` bytes. The agent need
+not rely on the order: any piece may be asked for at any time, and twice. A `conflict` ends the
+download; the client throws away what it has and offers to start again.
+
+#### Uploading
+
+An upload is three steps: `fs.upload_begin` announces a file and answers with an id, as many
+`fs.upload_chunk` as it takes carry its bytes, and `fs.upload_end` puts the file in place.
+
+**`fs.upload_begin`**
+
+- `destination` says where the file goes: `{ kind: "dir", path }` for a directory on the Mac
+  (`path` as under [Paths](#paths), followed through symbolic links), or `{ kind: "uploads" }`
+  for [the uploads area](#the-uploads-area). A missing or malformed `destination` is `bad_request`.
+- `name` is the file's name: one path segment, not empty, not `.` or `..`, without `/` and without
+  a NUL character, at most 255 bytes in UTF-8. Anything else is `bad_request`. In a directory the
+  file gets exactly this name, byte for byte. In the uploads area it gets a name made from it.
+- `size` is the whole file's length in bytes, a whole number from 0 up to `max_bytes`. More is
+  `too_large`; anything that is not such a number is `bad_request`.
+- `on_conflict` says what happens when the directory already holds something called `name`:
+  `"fail"` (also what a missing `on_conflict` means), `"replace"` or `"rename"`. It is described
+  under [When the name is taken](#when-the-name-is-taken), and ignored for the uploads area.
+- The agent creates an empty temporary file beside where the file will be:
+  `.hako-upload-<upload_id>` in the destination directory, created so that it fails if that name
+  exists, readable and writable by the user only. It is a sibling so that putting the file in
+  place is a rename within one file system. Creating it is also the test of whether the directory
+  can be written to: `permission_denied` is answered here, before a byte is sent.
+- `upload_id` is a string chosen by the agent: 1 to 64 characters of ASCII letters, digits, `-`
+  and `_`. It names the upload in the three other methods.
+- Errors: `bad_request`, `too_large`, `not_found` when nothing is at `path`, `not_a_directory`,
+  `permission_denied`, `conflict` and `is_a_directory` as described below, `failed` for anything
+  else, such as a full disk.
+
+**`fs.upload_chunk`**
+
+- `data` holds the next 1 to `chunk_bytes` bytes of the file, and `offset` says where in the file
+  they belong. The agent appends them to the temporary file and answers with `received`, the
+  number of bytes of the file it now has.
+- **Pieces come in order.** `offset` must be equal to the `received` of the answer before (0 for
+  the first piece): the client sends one piece, waits for its answer, and sends the next.
+- **A piece may be repeated.** When `offset + (length of the piece)` is not more than what the
+  agent already has, the piece is one whose answer was lost on the way: the agent writes nothing
+  and answers with the `received` it has. This is how an upload goes on after a broken
+  connection: the client sends its last unanswered piece again, exactly as it was.
+- Any other `offset` (a gap, or a piece that starts inside what has arrived and ends beyond it),
+  a piece that would take the file past the `size` that was announced, and an empty or oversized
+  piece are `bad_request`, and the upload stays as it was.
+- An `upload_id` the agent does not have is `not_found`: it was cancelled, it expired, or the app
+  was restarted. A write that fails (a full disk) is `failed`, and ends the upload: the agent
+  removes the temporary file and forgets the id.
+
+**`fs.upload_end`**
+
+- When fewer than `size` bytes have arrived the answer is `bad_request` and the upload stays open.
+- Otherwise the agent checks that the temporary file is exactly `size` bytes long, gives it its
+  permissions, and renames it into place. **Only now does a file of the real name exist**, and it
+  is whole: an upload that breaks off at any earlier point leaves nothing under that name, and a
+  file that is replaced stays as it was until this moment.
+- A new file gets the permissions any new file of that user gets (`0644` less the umask). A file
+  that replaces another keeps the permission bits of the one it replaces. A file in the uploads
+  area is readable and writable by the user only (`0600`).
+- The result names the file as it now is: `path` (absolute), `name` (its last segment, which
+  differs from the `name` that was sent after `"rename"` and in the uploads area), `size` and
+  `mtime`. For a directory, `path` is the `path` of `destination` joined with `name`, not made
+  canonical.
+- **The answer can be asked for again.** The agent remembers the result of every finished upload
+  for 10 minutes and answers a repeated `fs.upload_end` for that id with the same result, so a
+  client whose connection broke while it waited learns what happened. After that the id is
+  `not_found`.
+- Whatever error `fs.upload_end` answers other than that first `bad_request` ends the upload: the
+  temporary file is removed and the id forgotten.
+
+**`fs.upload_cancel`** removes the temporary file and forgets the id. It answers `{}` whether or
+not the id is known. It does not undo an upload that has ended.
+
+**Unfinished uploads.** An upload belongs to the app, not to a connection: it survives the
+client's connection and the agent's own reconnects to the relay. The agent gives up on one that no
+request has named for 15 minutes, removing its temporary file and forgetting its id, and it
+removes the temporary files of the uploads that were unfinished when the app quit, at quitting
+where it can and at its next start otherwise (so it keeps a record of them somewhere that
+outlives it). A client sends one upload at a time; an agent may hold several.
+
+#### When the name is taken
+
+For a directory, with `name` already there, whatever it is (a file, a directory, a link):
+
+| `on_conflict` | At `fs.upload_begin` | At `fs.upload_end` |
+|---|---|---|
+| `"fail"` | `conflict`. Nothing is created. | If the name was taken in the meantime: `conflict`, and the upload is discarded. The file is placed by a means that cannot replace one (`link` and `unlink`, or `renamex_np` with `RENAME_EXCL`), never by a check followed by a rename. |
+| `"replace"` | Accepted, unless what is there is a directory: `is_a_directory`. | The temporary file is renamed over what is there. A symbolic link of that name is itself replaced, not the file it points to. A directory there by now is `is_a_directory`. |
+| `"rename"` | Accepted. | The file gets the first free name of `name`, `stem (2).ext`, `stem (3).ext`, …, placed by the same means as for `"fail"`, so two uploads cannot take one name. |
+
+- `stem` and `.ext` are `name` cut at its last `.`; a name without a dot, or whose only dot is its
+  first character (`.env`), has no extension and is numbered at its end: `Makefile (2)`,
+  `.env (2)`. So `notes.txt` becomes `notes (2).txt` and `archive.tar.gz` becomes
+  `archive.tar (2).gz`. When the numbered name would be longer than 255 bytes, the agent shortens
+  the stem.
+- The client always begins with `"fail"`. On `conflict` it asks the owner, in the page, whether to
+  replace the file, keep both, or leave it, and begins again with `"replace"` or `"rename"`, or
+  not at all. Nothing is replaced without that answer, and closing the question is "leave it".
+
+#### The uploads area
+
+`{ kind: "uploads" }` stores the file in a place of the app's own instead of in the owner's
+folders. It is for files that are handed to a program by their path and are of no further use,
+which today means one thing: a picture the owner picked or took on the phone while in a terminal.
+
+- The area is `~/.hako/uploads` in the home directory of the user Hako runs as. A file goes into
+  the directory of the day its upload began, by the Mac's own clock and time zone:
+  `~/.hako/uploads/2026-10-13/`. The agent creates what is missing, for the user only (`0700`).
+- The file's name is made from `name`, so that its path can be typed into a shell as it is:
+  1. When `name` has a `.` that is not its first character, followed by 1 to 8 ASCII letters or
+     digits and nothing else, those are the extension, in lower case. Otherwise there is none.
+  2. In the rest, every character other than an ASCII letter, a digit, `.`, `_` and `-` becomes
+     `-`; a run of `-` becomes one; `-` and `.` are trimmed from both ends; what is left is cut
+     to its first 64 characters, and trimmed of `-` and `.` at its end again. If nothing is left
+     it is `file`.
+  3. The name is that, then the extension: `Screen Shot (1).PNG` becomes `Screen-Shot-1.png`,
+     and `fotoğraf.heic` becomes `foto-raf.heic`.
+  4. Nothing is ever replaced there, and `on_conflict` is not looked at. When the name is taken
+     the file becomes `Screen-Shot-1-2.png`, then `-3`, and so on, placed as for `"fail"` above.
+- The result's `path` is the file's absolute path, and from the area's directory down it holds
+  nothing but ASCII letters, digits, `.`, `_`, `-` and `/`.
+- The agent does not look at what the file is. Any file up to `max_bytes` is taken.
+- **Clean-up.** A file in the area whose `mtime` is more than 7 days old is deleted, and a day's
+  directory left empty is removed. The agent does this when it starts and at least once a day
+  while it runs. Nothing else is ever deleted there, and nothing outside the area.
+
+What the client does with it, in a terminal:
+
+1. The owner picks one or more pictures, or takes one. Claude Code takes PNG, JPEG, GIF and WebP,
+   so the client looks at each file's first bytes: one of those four, with no side longer than
+   2,576 pixels, is sent as it is, byte for byte. Anything else (an iPhone's HEIC) is drawn again
+   as a JPEG, and a picture with a longer side is scaled down to 2,576 pixels on that side first,
+   with its orientation applied. The agent never converts anything.
+2. Each is uploaded with `{ kind: "uploads" }`, one after another.
+3. When `fs.upload_end` has answered, the client writes the `path` it got, followed by one space,
+   as pasted text: with `term.input`, wrapped as a bracketed paste when the terminal has that
+   mode on (see [Input](#input)), or into its message box when that is where the owner is
+   writing. It adds a backslash before every character of the path that is not an ASCII letter,
+   a digit or one of `._/+@%:,=~-`, as a terminal does when a file is dragged into it, and it
+   never presses Enter. A program that turns a dropped picture's path into an attached picture,
+   as Claude Code does, then has the picture.
+4. If the upload fails, nothing is written to the terminal.
+
+#### Errors
+
+The transfer methods use the codes of the file methods, with these meanings:
+
+| Code | Meaning |
+|---|---|
+| `bad_request` | A malformed path, name, destination or `upload_id`; a number that is missing, not whole or out of range; `data` that is not base64; a piece out of order or beyond `size`; `fs.upload_end` before every byte has arrived. |
+| `not_found` | `fs.download`: nothing is at `path`. `fs.upload_begin`: the directory does not exist. The other upload methods: the agent has no upload of that id (any more). |
+| `not_a_directory` | `fs.upload_begin`: `path` is not a directory. |
+| `is_a_directory` | `fs.download` of a directory. An upload with `"replace"` whose name is a directory. |
+| `permission_denied` | The Mac refused: the file may not be read, or the directory may not be written to. `message` says what the Mac said. |
+| `conflict` | `fs.download`: the file's size or `mtime` is not what was expected. `fs.upload_begin` and `fs.upload_end` with `"fail"`: the name is taken. |
+| `too_large` | The file is over `max_bytes`. |
+| `failed` | Anything else: a full disk, a file that is not a regular file. `message` is a sentence for the owner. |
+
+`message` is shown to the owner as it is for `permission_denied` and `failed`. An agent without
+these methods answers `not_supported`, as for any unknown method.
+
+#### When the link breaks
+
+A request that was on its way when a connection dropped fails with `agent_offline` (the Mac's
+side) or is simply never answered (the client's side). The client does not give the transfer up:
+it waits until the relay says the Mac is online again and repeats the request it was waiting for.
+For a download that is the same `fs.download`. For an upload it is the same `fs.upload_chunk`,
+which the agent tells from a new piece by its `offset`, or the same `fs.upload_end`, which the
+agent answers from memory. So an iPhone that put the app in the background for a minute carries
+on where it was. When the agent no longer has the upload (`not_found`) the transfer has failed,
+and the client offers to start it again from the first byte. A request that the relay timed out
+is repeated twice before the transfer fails.
 
 ### Source control (sprint 5)
 

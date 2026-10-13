@@ -136,6 +136,33 @@ export type FsReadResult =
 export type FsWriteParams = { path: string; content: string; expected_mtime: number | null };
 export type FsWriteResult = { mtime: number; size: number };
 
+export type FsTransferInfo = { max_bytes: number; chunk_bytes: number };
+
+export type FsDownloadParams = {
+  path: string;
+  offset: number;
+  length: number;
+  /** What the first piece said about the file, or null for the first piece itself. */
+  expected_size: number | null;
+  expected_mtime: number | null;
+};
+export type FsDownloadResult = { data: string; size: number; mtime: number };
+
+/** Where an upload ends up: in a directory the client names, or in the app's own uploads area. */
+export type UploadDestination = { kind: "dir"; path: string } | { kind: "uploads" };
+export type UploadConflictChoice = "fail" | "replace" | "rename";
+
+export type FsUploadBeginParams = {
+  destination: UploadDestination;
+  name: string;
+  size: number;
+  on_conflict: UploadConflictChoice;
+};
+export type FsUploadBeginResult = { upload_id: string };
+export type FsUploadChunkParams = { upload_id: string; offset: number; data: string };
+export type FsUploadChunkResult = { received: number };
+export type FsUploadEndResult = { path: string; name: string; size: number; mtime: number };
+
 export type GitOperation = "merge" | "rebase" | "cherry-pick" | "revert";
 
 export type GitRepo = {
