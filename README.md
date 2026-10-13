@@ -7,7 +7,8 @@ waiting for you or done. You can open a terminal in a folder, bring a tab to the
 one, and you can use any of those terminals live: a shell, or a full-screen program such as Claude
 Code, with the keys a phone keyboard lacks. You can also browse the folders of your projects, read a
 file with syntax colours, and make a small edit and save it; and you can see what changed in every
-repository in those folders, read the diffs, and commit, push and pull.
+repository in those folders, read the diffs, and commit, push and pull. And your phone is told
+when an agent is waiting for you or has finished, and when a long command is done.
 
 Hako Remote is a companion to [Hako](https://github.com/egehakan/hako), a personal terminal that is
 based on Warp. Neither project is affiliated with, or endorsed by, Warp.
@@ -26,7 +27,8 @@ the one account and its login sessions in SQLite, and passes messages between th
 number of browsers. It does not understand what it carries. A request goes to the agent under a
 rewritten id and the answer goes back to the browser that asked; events from the agent fan out to
 every browser; terminal output goes only to the browsers subscribed to that terminal. Because it
-forwards any method name untouched, new features on the Mac need no change here.
+forwards any method name untouched, new features on the Mac need no change here. The one thing it
+reads is a notification, which it sends on to your devices as a push message.
 
 The **client** is the web app, built to be added to an iPhone home screen. It logs in with an email
 and password, holds one WebSocket to the relay, and redraws when the Mac says the workspace changed.
@@ -45,7 +47,9 @@ of the Hako on your Mac. `#/t/<session id>` is its address, so a link can open o
   on your Mac, scaled so its full width fits, and you pinch to zoom and drag to pan. **Fit to
   phone** (under the size shown in the title bar, or under "more" in the key bar) resizes the
   terminal on the Mac to the phone's screen instead, and gives the size back when you turn it off or
-  leave. The choice is remembered.
+  leave. It only ever makes the terminal smaller: in a browser window that holds more than the
+  Mac's pane, where the switch is called **Shrink to this window**, the terminal keeps the size it
+  has on the Mac. The choice is remembered.
 - **Keys.** A bar above the keyboard has Esc, Tab, Shift+Tab, a sticky Ctrl (tap it for the next
   key, hold it to lock), Ctrl+C, the arrows (which repeat while held), Enter, Paste, and a key that
   hides the keyboard. "More" holds Alt, Ctrl+D, Ctrl+L, Ctrl+R, Ctrl+Z, Home, End, Page up, Page
@@ -114,6 +118,30 @@ detached HEAD is at), how many commits it is ahead and behind, and how many file
 The list is read again when you open it, when you ask, after everything you do, and when the page
 comes back to the foreground. A Hako that does not have these methods yet answers `not_supported`,
 and Source control says to update it.
+
+## Notifications on iPhone
+
+Hako on your Mac can tell your phone when a coding agent such as Claude Code is waiting for you (a
+permission request, a question), when it has finished, and when a long command has finished.
+Tapping the notification opens that terminal. They are sent whether or not you are at the Mac.
+
+- **What it needs.** iOS 16.4 or later, and Hako **added to the home screen**: in Safari, Share,
+  then "Add to Home Screen", then open Hako from the new icon. A site in a Safari tab cannot send
+  notifications on an iPhone. A current Chrome, Edge, Firefox or Safari on a computer works too.
+- **Where to turn it on.** Account, then Notifications, then "Turn on notifications", and Allow
+  when the phone asks. The same place says what is in the way when something is (not on the home
+  screen yet, turned off in the Settings app), has a Mute switch and a switch for each of the three
+  kinds, and sends a test notification. The switches belong to the device.
+- **In the app.** While Hako is open, a notification also shows as a banner over the app.
+- **What leaves your server.** A notification's title and text, such as "Claude Code needs your
+  permission" and "Allow Bash: pnpm test?", travel from the relay through the push service of the
+  phone's maker (Apple's, for an iPhone) to the phone. They are encrypted for that device, so the
+  push service cannot read them, but it does see that your relay sent your phone something, when,
+  and how large. Mute, or logging out on the phone, stops it.
+
+The relay makes the key it signs these messages with on its first start and keeps it in its
+database; nothing has to be configured. A Hako that does not send notifications yet simply sends
+none.
 
 ## Run it locally
 
@@ -193,6 +221,21 @@ refused while `style.css` has changes that are not committed.
 - `MOCK_GIT_DELAY_MS=1500` makes every answer slow, and `MOCK_GIT_NETWORK_DELAY_MS=25000` makes a
   push or a pull take longer than the relay waits for an ordinary request.
 
+### The mock agent's notifications
+
+The mock agent sends a `notify` event when asked. In the terminal it runs in, press `w` (an agent
+is waiting), `d` (an agent has finished), `c` (a long command has finished) or `b` (four within a
+second, which the relay collapses into two). From anywhere else, write `agent_waiting`,
+`agent_done`, `command_done` or `burst` to the file it names when it starts (`MOCK_NOTIFY_FILE`
+chooses it), with a session id after the word to pick the terminal. An agent's notification also
+changes the status that terminal shows in the workspace list.
+
+A real notification needs the browser's permission. To see each state of Account, Notifications
+without it, on the development server only, run `localStorage.setItem("hako.notify.force",
+"<state>")` in the console and reload. The states are `unsupported`, `ios-update`,
+`needs-home-screen`, `ask`, `denied`, `denied-ios`, `connecting`, `failed`, `enabled` and
+`enabled-test-fails`; removing the entry switches back.
+
 Two more things help when working on the terminal:
 
 - `kill -USR1 <pid of the mock agent>` drops the next output frame of every terminal that is being
@@ -203,15 +246,18 @@ Two more things help when working on the terminal:
 
 ## Configuration
 
-| Variable                | Meaning                                                                                                                                                                                                                                      |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `HAKO_OWNER_EMAIL`      | The email of the one account. There is no sign-up.                                                                                                                                                                                           |
-| `HAKO_INITIAL_PASSWORD` | Used once, to create the account when the database is empty. Changing it later does nothing; change the password in the app.                                                                                                                 |
-| `HAKO_AGENT_KEY`        | The key the desktop app sends as `Authorization: Bearer …` on `/ws/agent`. At least 24 characters.                                                                                                                                           |
-| `HAKO_SESSION_SECRET`   | Signs session cookies. At least 24 characters. Changing it logs every device out.                                                                                                                                                            |
-| `PUBLIC_ORIGIN`         | The origin the app is served from, such as `https://hako.example.com`. Requests and WebSockets from any other origin are refused. Several origins can be given, separated by commas. Cookies are marked `Secure` when every origin is HTTPS. |
-| `DATA_DIR`              | Where `hako.db` lives. Defaults to `./.data`.                                                                                                                                                                                                |
-| `PORT`                  | Defaults to `8787`.                                                                                                                                                                                                                          |
+| Variable                | Meaning                                                                                                                                                                                                                                             |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `HAKO_OWNER_EMAIL`      | The email of the one account. There is no sign-up.                                                                                                                                                                                                  |
+| `HAKO_INITIAL_PASSWORD` | Used once, to create the account when the database is empty. Changing it later does nothing; change the password in the app.                                                                                                                        |
+| `HAKO_AGENT_KEY`        | The key the desktop app sends as `Authorization: Bearer …` on `/ws/agent`. At least 24 characters.                                                                                                                                                  |
+| `HAKO_SESSION_SECRET`   | Signs session cookies. At least 24 characters. Changing it logs every device out.                                                                                                                                                                   |
+| `PUBLIC_ORIGIN`         | The origin the app is served from, such as `https://hako.example.com`. Requests and WebSockets from any other origin are refused. Several origins can be given, separated by commas. Cookies are marked `Secure` when every origin is HTTPS.        |
+| `DATA_DIR`              | Where `hako.db` lives. Defaults to `./.data`.                                                                                                                                                                                                       |
+| `PORT`                  | Defaults to `8787`.                                                                                                                                                                                                                                 |
+| `VAPID_PUBLIC_KEY`      | Optional, with `VAPID_PRIVATE_KEY`: the key pair notifications are signed with, in base64url, in place of the pair the relay makes and keeps in its database. Changing it makes every device subscribe again the next time the app is opened there. |
+| `VAPID_PRIVATE_KEY`     | See above. Both or neither.                                                                                                                                                                                                                         |
+| `VAPID_SUBJECT`         | Optional. The contact the relay names to push services, a `mailto:` or an `https:` address. Defaults to `mailto:` and `HAKO_OWNER_EMAIL`.                                                                                                           |
 
 Generate the two secrets with something like `openssl rand -base64 36`.
 
@@ -255,6 +301,13 @@ What does not:
   Mac. The relay, and whoever runs or compromises the machine it is on, can read and change
   everything that passes through, including what you type into a terminal.
 - There is no second factor.
+- **Notifications pass through a third party.** With notifications on, their titles and texts go
+  from the relay to the phone through the push service of the phone's maker: Apple's for an
+  iPhone, Google's or Mozilla's for other browsers. They are encrypted for the device on the way,
+  so the push service cannot read them; it learns that your relay sent your device a message, when
+  and how large, and it is given `HAKO_OWNER_EMAIL` as the relay's contact. A notification can also
+  be read on a locked phone. The relay stores, for each device, the address and the keys the
+  browser gave it for this, until that device logs out.
 - A stolen, unlocked phone with the app open is a terminal on your Mac.
 
 So use a long password that you use nowhere else, keep the agent key and the session secret out of
