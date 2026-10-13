@@ -11,10 +11,15 @@
 //
 // `kill -USR1 <pid>` drops the next output frame of every terminal a client is watching, which is
 // how to see a client recover from a gap.
+//
+// The file methods serve a throwaway tree that is built at start and removed at exit, and nothing
+// outside it. The sample workspace lives in that tree, so its folders and working directories can
+// be browsed. `kill -USR2 <pid>` rewrites fixtures/conflict.txt behind the client's back.
+// MOCK_FS=0 leaves the file methods out, as an older desktop app would; MOCK_FS_DELAY_MS=1500
+// makes them slow.
 
 import { type ChildProcess, spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
@@ -31,10 +36,18 @@ import {
   type TerminalTheme,
   type Window,
 } from "../shared/protocol.ts";
+import {
+  createFixture,
+  createFsMethods,
+  FsFailure,
+  removeFixture,
+  rewriteConflictFile,
+} from "./mock-files.ts";
 
 const RELAY_URL = process.env.RELAY_URL ?? `ws://localhost:${process.env.PORT ?? 8787}/ws/agent`;
 const AGENT_KEY = process.env.HAKO_AGENT_KEY ?? "";
-const HOME = "/Users/ege";
+const FS_ENABLED = process.env.MOCK_FS !== "0";
+const FS_DELAY_MS = Number(process.env.MOCK_FS_DELAY_MS ?? 0);
 const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 32;
 const SCROLLBACK_BYTES = 64 * 1024;
@@ -46,6 +59,9 @@ if (AGENT_KEY === "") {
   console.error("HAKO_AGENT_KEY is not set. Put it in .env or pass it in the environment.");
   process.exit(1);
 }
+
+/** The home directory of the sample workspace: the root of the fixture tree. */
+const HOME = createFixture();
 
 class RpcFailure extends Error {
   readonly code: ErrorCode;
@@ -200,18 +216,15 @@ function shellWanted(): boolean {
 const SHELL_ENABLED = shellWanted();
 const PTY_HELPER = fileURLToPath(new URL("./pty-helper.py", import.meta.url));
 let shellDirectory: string | null = null;
-let shellDirectoryIsOurs = false;
 
-/** The directory real shells start in, with a prompt of its own instead of the owner's dotfiles. */
+/**
+ * The directory real shells start in, with a prompt of its own instead of the owner's dotfiles:
+ * the fixture tree, so that what the shell changes shows up in the file browser.
+ */
 function shellHome(): string {
   if (shellDirectory !== null) return shellDirectory;
-  if (process.env.MOCK_SHELL_DIR) {
-    shellDirectory = process.env.MOCK_SHELL_DIR;
-    mkdirSync(shellDirectory, { recursive: true });
-  } else {
-    shellDirectory = mkdtempSync(join(tmpdir(), "hako-mock-shell-"));
-    shellDirectoryIsOurs = true;
-  }
+  shellDirectory = process.env.MOCK_SHELL_DIR ?? HOME;
+  mkdirSync(shellDirectory, { recursive: true });
   writeFileSync(
     join(shellDirectory, ".zshrc"),
     "PROMPT='%F{yellow}mock%f %1~ %# '\nunsetopt beep\n",
@@ -494,7 +507,9 @@ const THEME: TerminalTheme = {
   font_size: 13,
 };
 
-const methods: Record<string, (params: Record<string, unknown>) => unknown> = {
+type Method = (params: Record<string, unknown>) => unknown;
+
+const methods: Record<string, Method> = {
   "app.info": (): AppInfo => ({
     name: "Ege’s MacBook Pro",
     version: "0.1.0-mock",
@@ -573,6 +588,8 @@ const methods: Record<string, (params: Record<string, unknown>) => unknown> = {
   "theme.get": () => THEME,
 };
 
+const fsMethods: Record<string, Method> = FS_ENABLED ? createFsMethods(HOME, () => windows) : {};
+
 function handleFrame(text: string): void {
   let frame: Record<string, unknown>;
   try {
@@ -592,23 +609,29 @@ function handleFrame(text: string): void {
   }
   if (frame.t !== "req" || typeof frame.id !== "string" || typeof frame.method !== "string") return;
 
-  const method = methods[frame.method];
+  const id = frame.id;
+  const slow = FS_DELAY_MS > 0 && Object.hasOwn(fsMethods, frame.method);
+  const method = methods[frame.method] ?? fsMethods[frame.method];
   if (!method) {
     send({
       t: "res",
-      id: frame.id,
+      id,
       ok: false,
       error: { code: "not_supported", message: `The mock agent has no ${frame.method}` },
     });
     return;
   }
-  try {
-    send({ t: "res", id: frame.id, ok: true, result: method(params) });
-  } catch (error) {
-    const code = error instanceof RpcFailure ? error.code : "failed";
-    const message = error instanceof Error ? error.message : "Failed";
-    send({ t: "res", id: frame.id, ok: false, error: { code, message } });
-  }
+  const answer = () => {
+    try {
+      send({ t: "res", id, ok: true, result: method(params) });
+    } catch (error) {
+      const known = error instanceof RpcFailure || error instanceof FsFailure;
+      const message = error instanceof Error ? error.message : "Failed";
+      send({ t: "res", id, ok: false, error: { code: known ? error.code : "failed", message } });
+    }
+  };
+  if (slow) setTimeout(answer, FS_DELAY_MS);
+  else answer();
 }
 
 // Connection
@@ -664,9 +687,7 @@ function stop(): void {
   stopping = true;
   // To a client this must look like a Mac that went offline, not like terminals that ended.
   for (const terminal of terminals.values()) terminal.abandon();
-  if (shellDirectory !== null && shellDirectoryIsOurs) {
-    rmSync(shellDirectory, { recursive: true, force: true });
-  }
+  removeFixture(HOME);
   connection?.close(1000);
   setTimeout(() => process.exit(0), 200);
 }
@@ -675,6 +696,15 @@ process.on("SIGTERM", stop);
 process.on("SIGUSR1", () => {
   for (const terminal of terminals.values()) terminal.dropNextFrame = terminal.streaming;
 });
+process.on("SIGUSR2", () => {
+  console.log(`rewrote ${rewriteConflictFile(HOME)}`);
+});
+
+console.log(
+  FS_ENABLED
+    ? `serving files from ${HOME} (pid ${process.pid})`
+    : "the file methods are off (MOCK_FS=0)",
+);
 
 if (SHELL_ENABLED) {
   console.log(
