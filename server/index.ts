@@ -5,6 +5,8 @@ import { UserStore } from "./auth.ts";
 import { loadConfig } from "./config.ts";
 import { openDatabase } from "./db.ts";
 import { createApp } from "./http.ts";
+import { NotifyGate } from "./notify.ts";
+import { loadVapidKeys, PushService, PushStore } from "./push.ts";
 import { LoginLimiter } from "./rate-limit.ts";
 import { Relay } from "./relay.ts";
 import { SessionStore } from "./sessions.ts";
@@ -21,7 +23,22 @@ const db = openDatabase(path.join(config.dataDir, "hako.db"));
 const users = new UserStore(db);
 const sessions = new SessionStore(db, config.sessionSecret);
 const limiter = new LoginLimiter(db);
-const relay = new Relay({ log });
+const pushStore = new PushStore(db);
+const push = new PushService({
+  store: pushStore,
+  vapid: loadVapidKeys(db, config.vapidKeys),
+  subject: config.vapidSubject,
+  log,
+});
+// A notification goes to the clients that are open and, as a push, to the devices that want it.
+const notifyGate: NotifyGate = new NotifyGate({
+  deliver: (notification) => {
+    relay.sendEvent("notify", notification);
+    push.notify(notification);
+  },
+  log,
+});
+const relay = new Relay({ log, onNotify: (data) => notifyGate.accept(data) });
 
 if (await users.ensure(config.ownerEmail, config.initialPassword)) {
   log("created the owner account from HAKO_OWNER_EMAIL and HAKO_INITIAL_PASSWORD");
@@ -32,7 +49,12 @@ const app = createApp({
   users,
   sessions,
   limiter,
-  onSessionsEnded: (hashes) => relay.closeSessions(hashes),
+  pushStore,
+  push,
+  onSessionsEnded: (hashes) => {
+    relay.closeSessions(hashes);
+    pushStore.removeForSessions(hashes);
+  },
 });
 
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
@@ -43,6 +65,7 @@ attachWebSockets(server, { config, relay, sessions });
 const pruneTimer = setInterval(() => {
   sessions.prune();
   limiter.prune();
+  pushStore.prune();
 }, HOUR_MS);
 pruneTimer.unref();
 

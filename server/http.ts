@@ -7,7 +7,9 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { isAllowedOrigin, safeEqual, type UserStore } from "./auth.ts";
 import type { Config } from "./config.ts";
 import { hashPassword, passwordProblem, verifyPassword } from "./password.ts";
+import { type PushService, type PushStore, readPrefsChange, readSubscription } from "./push.ts";
 import { type LoginLimiter, limiterKey } from "./rate-limit.ts";
+import { DEFAULT_NOTIFY_PREFS } from "../shared/notify.ts";
 import { cookieName, SESSION_TTL_MS, type SessionStore } from "./sessions.ts";
 
 export type AppDeps = {
@@ -15,6 +17,8 @@ export type AppDeps = {
   users: UserStore;
   sessions: SessionStore;
   limiter: LoginLimiter;
+  pushStore: PushStore;
+  push: PushService;
   /** Called with the hashes of sessions that just ended, so their sockets can be closed. */
   onSessionsEnded: (sessionHashes: string[]) => void;
 };
@@ -38,7 +42,7 @@ function readString(body: unknown, field: string): string | null {
 }
 
 export function createApp(deps: AppDeps): Hono {
-  const { config, users, sessions, limiter } = deps;
+  const { config, users, sessions, limiter, pushStore, push } = deps;
   const cookie = cookieName(config.secureCookies);
   const app = new Hono();
 
@@ -142,6 +146,62 @@ export function createApp(deps: AppDeps): Hono {
     users.setPasswordHash(await hashPassword(next));
     deps.onSessionsEnded(sessions.deleteOthers(session));
     return c.json({ ok: true });
+  });
+
+  // Notifications: the device behind the session cookie, and what is sent to it.
+
+  app.use("/api/push/*", async (c, next) => {
+    if (!currentSession(getCookie(c, cookie))) return c.json({ error: "unauthorized" }, 401);
+    await next();
+  });
+
+  app.get("/api/push/key", (c) => c.json({ key: push.publicKey }));
+
+  app.get("/api/push/device", (c) =>
+    c.json(pushStore.state(currentSession(getCookie(c, cookie))!)),
+  );
+
+  app.post("/api/push/subscribe", async (c) => {
+    const session = currentSession(getCookie(c, cookie))!;
+    const body: unknown = await c.req.json().catch(() => null);
+    const subscription = readSubscription(body, !config.secureCookies);
+    const change = readPrefsChange(body);
+    if (subscription === null || change === null) return c.json({ error: "bad_request" }, 400);
+    // Preferences come with a subscription only when the device has some to bring.
+    const given = change.muted !== undefined || Object.keys(change.kinds).length > 0;
+    const prefs = given
+      ? {
+          muted: change.muted ?? DEFAULT_NOTIFY_PREFS.muted,
+          kinds: { ...DEFAULT_NOTIFY_PREFS.kinds, ...change.kinds },
+        }
+      : null;
+    return c.json(pushStore.save(session, subscription, prefs));
+  });
+
+  app.post("/api/push/settings", async (c) => {
+    const session = currentSession(getCookie(c, cookie))!;
+    const change = readPrefsChange(await c.req.json().catch(() => null));
+    if (change === null) return c.json({ error: "bad_request" }, 400);
+    const current = pushStore.state(session);
+    if (!current.subscribed) return c.json({ error: "not_subscribed" }, 404);
+    const state = pushStore.setPrefs(session, {
+      muted: change.muted ?? current.muted,
+      kinds: { ...current.kinds, ...change.kinds },
+    });
+    return state ? c.json(state) : c.json({ error: "not_subscribed" }, 404);
+  });
+
+  app.post("/api/push/unsubscribe", (c) => {
+    pushStore.removeForSessions([currentSession(getCookie(c, cookie))!]);
+    return c.json({ ok: true });
+  });
+
+  app.post("/api/push/test", async (c) => {
+    const result = await push.test(currentSession(getCookie(c, cookie))!);
+    if (result === null) return c.json({ error: "not_subscribed" }, 404);
+    if (result.ok) return c.json({ ok: true });
+    if (result.gone) return c.json({ error: "gone" }, 410);
+    return c.json({ error: "push_failed", status: result.status, reason: result.reason }, 502);
   });
 
   app.all("/api/*", (c) => c.json({ error: "not_found" }, 404));
