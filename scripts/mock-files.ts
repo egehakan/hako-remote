@@ -582,7 +582,12 @@ export function removeFixture(root: string): void {
   } catch {
     // Already gone.
   }
-  rmSync(root, { recursive: true, force: true });
+  try {
+    // A shell that is still exiting may write into the tree while it is being removed.
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  } catch (error) {
+    console.error(`could not remove ${root}: ${error instanceof Error ? error.message : error}`);
+  }
 }
 
 /** Changes the conflict file behind the client's back, as an editor on the Mac would. */

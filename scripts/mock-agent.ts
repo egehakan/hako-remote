@@ -227,7 +227,7 @@ function shellHome(): string {
   mkdirSync(shellDirectory, { recursive: true });
   writeFileSync(
     join(shellDirectory, ".zshrc"),
-    "PROMPT='%F{yellow}mock%f %1~ %# '\nunsetopt beep\n",
+    "PROMPT='%F{yellow}mock%f %1~ %# '\nunsetopt beep\nunset HISTFILE\n",
   );
   return shellDirectory;
 }
