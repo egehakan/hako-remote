@@ -3,6 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import webpush from "web-push";
 import {
   DEFAULT_NOTIFY_PREFS,
+  type DeviceState,
   NOTIFY_KINDS,
   type NotifyEvent,
   type NotifyKind,
@@ -17,10 +18,6 @@ export type VapidKeys = { publicKey: string; privateKey: string };
 export type Subscription = { endpoint: string; p256dh: string; auth: string };
 
 type StoredSubscription = Subscription & { prefs: NotifyPrefs };
-
-/** What the relay holds for the device a login session belongs to. */
-export type DeviceState =
-  { subscribed: false } | ({ subscribed: true; endpoint_id: string } & NotifyPrefs);
 
 export type SendResult =
   | { ok: true }

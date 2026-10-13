@@ -20,6 +20,10 @@ export const DEFAULT_NOTIFY_PREFS: NotifyPrefs = {
   kinds: { agent_waiting: true, agent_done: true, command_done: true },
 };
 
+/** What the relay holds for the device a login session belongs to (`GET /api/push/device`). */
+export type DeviceState =
+  { subscribed: false } | ({ subscribed: true; endpoint_id: string } & NotifyPrefs);
+
 /** Limits in Unicode code points (what Rust's `chars()` counts). */
 export const NOTIFY_TITLE_MAX = 100;
 export const NOTIFY_BODY_MAX = 300;

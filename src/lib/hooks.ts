@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { type ConnectionSnapshot, relay } from "./connection";
+import { type NotificationsSnapshot, notifications } from "./notifications";
 import { type WorkspaceSnapshot, workspaceStore } from "./workspace";
 
 export function useConnection(): ConnectionSnapshot {
@@ -8,6 +9,10 @@ export function useConnection(): ConnectionSnapshot {
 
 export function useWorkspace(): WorkspaceSnapshot {
   return useSyncExternalStore(workspaceStore.subscribe, workspaceStore.getSnapshot);
+}
+
+export function useNotifications(): NotificationsSnapshot {
+  return useSyncExternalStore(notifications.subscribe, notifications.getSnapshot);
 }
 
 const WIDE = "(min-width: 48rem) and (min-height: 30rem)";

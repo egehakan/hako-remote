@@ -7,9 +7,13 @@ export type WorkspaceSnapshot = {
   windows: Window[] | null;
   /** Set when the Mac is online but the last `workspace.list` failed. */
   error: string | null;
+  /** When `windows` was last answered by the Mac, in milliseconds since the epoch; 0 before. */
+  loadedAt: number;
 };
 
-let snapshot: WorkspaceSnapshot = { windows: null, error: null };
+const EMPTY: WorkspaceSnapshot = { windows: null, error: null, loadedAt: 0 };
+
+let snapshot: WorkspaceSnapshot = EMPTY;
 let inFlight: Promise<void> | null = null;
 let stale = false;
 const listeners = new Set<() => void>();
@@ -24,11 +28,11 @@ async function load(): Promise<void> {
     do {
       stale = false;
       const result = await relay.request<Workspace>("workspace.list");
-      set({ windows: result.windows, error: null });
+      set({ windows: result.windows, error: null, loadedAt: Date.now() });
     } while (stale);
   } catch (error) {
     if (relay.getSnapshot().agent?.online) {
-      set({ windows: snapshot.windows, error: error instanceof Error ? error.message : "Failed" });
+      set({ ...snapshot, error: error instanceof Error ? error.message : "Failed" });
     }
   } finally {
     inFlight = null;
@@ -46,7 +50,7 @@ function refresh(): Promise<void> {
 relay.on("workspace.changed", () => void refresh());
 relay.on("agent.status", (data) => {
   if ((data as AgentStatus).online) void refresh();
-  else set({ windows: null, error: null });
+  else set(EMPTY);
 });
 
 export const workspaceStore = {
@@ -56,7 +60,7 @@ export const workspaceStore = {
   },
   getSnapshot: (): WorkspaceSnapshot => snapshot,
   refresh,
-  clear: () => set({ windows: null, error: null }),
+  clear: () => set(EMPTY),
 };
 
 export type TabLocation = { window: Window; tab: Tab; folder: Folder | null };

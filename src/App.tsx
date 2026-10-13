@@ -4,6 +4,7 @@ import { api } from "@/lib/api";
 import { relay } from "@/lib/connection";
 import { clearFiles } from "@/lib/files/store";
 import { clearGit } from "@/lib/git/store";
+import { notifications } from "@/lib/notifications";
 import { navigate, routes } from "@/lib/route";
 import { workspaceStore } from "@/lib/workspace";
 import { LoginScreen } from "@/screens/login";
@@ -41,7 +42,11 @@ export function App() {
     if (!signedIn) return;
     relay.onUnauthorized = signedOut;
     relay.start();
-    return () => relay.stop();
+    notifications.start();
+    return () => {
+      relay.stop();
+      notifications.stop();
+    };
   }, [signedIn, signedOut]);
 
   if (auth.state === "checking") {
