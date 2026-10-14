@@ -96,7 +96,7 @@ export function MoreSheet({ repoPath, open, onOpenChange }: MoreSheetProps) {
           <div className="flex flex-col divide-y border-t">
             <Item
               icon={GitCommitHorizontalIcon}
-              label="Commit…"
+              label={repo.operation === "merge" ? "Commit merge…" : "Commit…"}
               detail={
                 repo.changed > 0
                   ? `All ${plural(repo.changed, "changed file")}`

@@ -4,6 +4,7 @@ import {
   CloudIcon,
   GitBranchIcon,
   GitBranchPlusIcon,
+  GitMergeIcon,
   LockIcon,
   SearchIcon,
   XIcon,
@@ -30,8 +31,15 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { baseName } from "@/lib/files/paths";
 import { checkBranchName, filterBranches, localNameOf, timeAgo } from "@/lib/git/branches";
 import { branchLabel } from "@/lib/git/repos";
-import { type SwitchTarget, useActivity, useBranches, useRepo } from "@/lib/git/store";
+import {
+  type MergeTarget,
+  type SwitchTarget,
+  useActivity,
+  useBranches,
+  useRepo,
+} from "@/lib/git/store";
 import { useConnection, useWide } from "@/lib/hooks";
+import { useMergeSupport } from "@/lib/probe";
 import { navigate, routes } from "@/lib/route";
 import { useVisibleViewport } from "@/lib/terminal/viewport";
 import { cn } from "@/lib/utils";
@@ -45,10 +53,12 @@ type BranchPickerProps = {
   onOpenChange: (open: boolean) => void;
   /** Called with the branch that was chosen, or the name of one to make. */
   onPick: (repo: GitRepo, target: SwitchTarget) => void;
+  /** Called with a branch to merge into the current one, which still has to be confirmed. */
+  onMerge: (repo: GitRepo, target: MergeTarget) => void;
 };
 
 /** Where a repository's branch is changed: a sheet on a phone, a dialog where there is room for one. */
-export function BranchPicker({ repoPath, open, onOpenChange, onPick }: BranchPickerProps) {
+export function BranchPicker({ repoPath, open, onOpenChange, onPick, onMerge }: BranchPickerProps) {
   const wide = useWide();
   const repo = useRepo(repoPath);
   if (wide) {
@@ -63,6 +73,7 @@ export function BranchPicker({ repoPath, open, onOpenChange, onPick }: BranchPic
               Title={DialogTitle}
               Description={DialogDescription}
               onPick={onPick}
+              onMerge={onMerge}
               onClose={() => onOpenChange(false)}
             />
           ) : (
@@ -92,6 +103,7 @@ export function BranchPicker({ repoPath, open, onOpenChange, onPick }: BranchPic
             Title={SheetTitle}
             Description={SheetDescription}
             onPick={onPick}
+            onMerge={onMerge}
             onClose={() => onOpenChange(false)}
           />
         ) : (
@@ -108,10 +120,11 @@ type PickerProps = {
   Title: ComponentType<{ children: ReactNode; className?: string }>;
   Description: ComponentType<{ children: ReactNode; className?: string }>;
   onPick: (repo: GitRepo, target: SwitchTarget) => void;
+  onMerge: (repo: GitRepo, target: MergeTarget) => void;
   onClose: () => void;
 };
 
-function Picker({ repo, open, Title, Description, onPick, onClose }: PickerProps) {
+function Picker({ repo, open, Title, Description, onPick, onMerge, onClose }: PickerProps) {
   useVisibleViewport();
   const { link, agent } = useConnection();
   const offline = link === "open" && agent?.online === false;
@@ -138,6 +151,16 @@ function Picker({ repo, open, Title, Description, onPick, onClose }: PickerProps
     onPick(repo, target);
     onClose();
   };
+  // Merging needs a branch to merge into, and a Hako on the Mac that can.
+  const mergeSupport = useMergeSupport();
+  const into = mergeSupport === "yes" && data?.current ? data.current : null;
+  const merge =
+    into === null
+      ? null
+      : (target: MergeTarget) => {
+          onMerge(repo, target);
+          onClose();
+        };
 
   return (
     <>
@@ -266,7 +289,9 @@ function Picker({ repo, open, Title, Description, onPick, onClose }: PickerProps
                       branch={branch}
                       current={branch.name === data?.current}
                       disabled={busy}
+                      into={into}
                       onPick={pick}
+                      onMerge={merge}
                       onClose={onClose}
                     />
                   )}
@@ -278,7 +303,9 @@ function Picker({ repo, open, Title, Description, onPick, onClose }: PickerProps
                       branch={branch}
                       current={false}
                       disabled={busy}
+                      into={into}
                       onPick={pick}
+                      onMerge={merge}
                       onClose={onClose}
                     />
                   )}
@@ -331,7 +358,10 @@ type BranchRowProps = {
   branch: GitBranch;
   current: boolean;
   disabled: boolean;
+  /** The current branch, which a merge goes into; null when there is nothing to merge into. */
+  into: string | null;
   onPick: (target: SwitchTarget) => void;
+  onMerge: ((target: MergeTarget) => void) | null;
   onClose: () => void;
 };
 
@@ -339,7 +369,9 @@ const BranchRow = memo(function BranchRow({
   branch,
   current,
   disabled,
+  into,
   onPick,
+  onMerge,
   onClose,
 }: BranchRowProps) {
   const held = branch.worktree !== null;
@@ -413,23 +445,42 @@ const BranchRow = memo(function BranchRow({
     </>
   );
 
+  const mergeButton =
+    onMerge !== null && into !== null && !current ? (
+      <Button
+        variant="ghost"
+        size="lg"
+        className="mr-2 shrink-0 gap-1.5 px-2.5 text-muted-foreground"
+        aria-label={`Merge ${branch.name} into ${into}`}
+        title={`Merge into ${into}`}
+        disabled={disabled}
+        onClick={() => onMerge({ branch: branch.name, kind: branch.kind })}
+      >
+        <GitMergeIcon data-icon="inline-start" />
+        Merge
+      </Button>
+    ) : null;
+
   if (held) {
     return (
       <li className={cn("flex items-center", lazy)}>
         <div className={cn(layout, "min-w-0 flex-1")} aria-disabled="true">
           {contents}
         </div>
-        <Button
-          variant="ghost"
-          size="lg"
-          className="mr-2 shrink-0 text-foreground"
-          onClick={() => {
-            onClose();
-            navigate(routes.repo(branch.worktree ?? ""));
-          }}
-        >
-          Open worktree
-        </Button>
+        <div className="flex shrink-0 flex-col items-end">
+          <Button
+            variant="ghost"
+            size="lg"
+            className="mr-2 shrink-0 text-foreground"
+            onClick={() => {
+              onClose();
+              navigate(routes.repo(branch.worktree ?? ""));
+            }}
+          >
+            Open worktree
+          </Button>
+          {mergeButton}
+        </div>
       </li>
     );
   }
@@ -441,18 +492,19 @@ const BranchRow = memo(function BranchRow({
     );
   }
   return (
-    <li className={lazy}>
+    <li className={cn("flex items-center", lazy)}>
       <button
         type="button"
         disabled={disabled}
         onClick={() => onPick({ branch: branch.name, kind: branch.kind })}
         className={cn(
           layout,
-          "outline-none hover:bg-accent/50 focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset disabled:opacity-50",
+          "min-w-0 flex-1 outline-none hover:bg-accent/50 focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset disabled:opacity-50",
         )}
       >
         {contents}
       </button>
+      {mergeButton}
     </li>
   );
 });

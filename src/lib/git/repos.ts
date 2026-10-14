@@ -119,7 +119,7 @@ export type Explained = { title: string; hint: string | null };
  * itself is always shown, and nothing is decided from this.
  */
 export function explainFailure(
-  kind: "commit" | "push" | "pull" | "discard" | "switch",
+  kind: "commit" | "push" | "pull" | "discard" | "switch" | "merge" | "abort",
   code: string | null,
   output: string,
 ): Explained {
@@ -141,7 +141,8 @@ export function explainFailure(
       hint: "Another command is still running there. Try again when it has finished.",
     };
   }
-  if (code === "not_found") {
+  // For a merge it is the branch that may be gone, which is said below.
+  if (code === "not_found" && kind !== "merge") {
     return { title: "This repository is gone", hint: "It was moved or deleted on your Mac." };
   }
   if (
@@ -236,7 +237,39 @@ export function explainFailure(
     }
     return { title: "Couldn’t switch branches", hint: null };
   }
+  if (kind === "merge") {
+    if (/would be overwritten|commit your changes or stash them/i.test(output)) {
+      return {
+        title: "Your changes are in the way",
+        hint: "Nothing was changed. The merge would overwrite files you have changed: commit or discard them first, then merge.",
+      };
+    }
+    if (
+      /not possible because you have unmerged files|MERGE_HEAD exists|merge is in progress/i.test(
+        output,
+      )
+    ) {
+      return {
+        title: "A merge is already in progress",
+        hint: "Nothing was changed. Finish it with Commit merge, or abort it, then merge again.",
+      };
+    }
+    if (code === "not_found") {
+      return {
+        title: "That branch is gone",
+        hint: "Nothing was changed. It may have been renamed or deleted on your Mac.",
+      };
+    }
+    return { title: "Couldn’t merge", hint: null };
+  }
+  if (kind === "abort") return { title: "Couldn’t abort the merge", hint: null };
   if (kind === "commit") {
+    if (code === "conflict") {
+      return {
+        title: "Conflict markers are still there",
+        hint: "Nothing was committed. Open these files from the merge banner, keep the lines you want and delete the marker lines, then commit the merge.",
+      };
+    }
     if (/nothing to commit/i.test(output)) return { title: "Nothing to commit", hint: null };
     if (/Please tell me who you are|user\.email/i.test(output)) {
       return {

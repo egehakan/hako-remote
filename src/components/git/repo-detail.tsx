@@ -10,6 +10,7 @@ import { ActivityLine } from "@/components/git/activity-line";
 import { BranchControl } from "@/components/git/branch-control";
 import { FileRow } from "@/components/git/file-row";
 import { LineCounts } from "@/components/git/file-status";
+import { MergeBanner } from "@/components/git/merge-banner";
 import { GraphSection } from "@/components/git/graph-section";
 import { RepoActions } from "@/components/git/repo-actions";
 import { SectionHeader } from "@/components/git/section-header";
@@ -136,7 +137,9 @@ export function RepoDetail({ repoPath, selectedFile, selectedCommit }: RepoDetai
                 </AlertDescription>
               </Alert>
             ) : null}
-            {repo.operation !== null ? (
+            {data?.merge ? (
+              <MergeBanner repo={repo} merge={data.merge} />
+            ) : repo.operation !== null ? (
               <Alert className="mx-auto mt-3 w-[calc(100%-2rem)]">
                 <GitMergeIcon />
                 <AlertTitle>A {repo.operation} is in progress</AlertTitle>

@@ -10,6 +10,9 @@ import type {
   GitCommitResult,
   GitDiscardResult,
   GitFile,
+  GitMergeAbortResult,
+  GitMergeKind,
+  GitMergeResult,
   GitPullResult,
   GitPushResult,
   GitRepo,
@@ -31,7 +34,7 @@ export type Loadable<T> = {
   loading: boolean;
 };
 
-export type ActionKind = "commit" | "push" | "pull" | "discard" | "switch";
+export type ActionKind = "commit" | "push" | "pull" | "discard" | "switch" | "merge" | "abort";
 
 /** The last thing done to a repository from here, for as long as it is worth showing. */
 export type Activity = {
@@ -43,6 +46,8 @@ export type Activity = {
   output: string;
   code: GitError["code"] | null;
   at: number;
+  /** A command that finished but left something to do, such as a merge that stopped at conflicts. */
+  attention?: boolean;
 };
 
 const IDLE: Loadable<never> = { data: null, error: null, loading: false };
@@ -378,6 +383,8 @@ function failureSummary(kind: ActionKind, error: GitError): string {
     pull: "Pull",
     discard: "Discard",
     switch: "Switch",
+    merge: "Merge",
+    abort: "Abort merge",
   }[kind];
   switch (error.code) {
     case "timeout":
@@ -402,7 +409,7 @@ async function act<T extends { repo: GitRepo }>(
   kind: ActionKind,
   running: string,
   request: () => Promise<T>,
-  done: (result: T) => { summary: string; output: string },
+  done: (result: T) => { summary: string; output: string; attention?: boolean },
 ): Promise<Outcome<T>> {
   const at = Date.now();
   setActivity(repo, { kind, state: "running", summary: running, output: "", code: null, at });
@@ -551,6 +558,67 @@ function runSwitch(
           : `Switched to ${result.current ?? name}`,
       output: "",
     }),
+  );
+}
+
+/** A branch to merge into the current one. */
+export type MergeTarget = { branch: string; kind: GitMergeKind };
+
+/** Reads the repository after a command whose answer does not describe it. */
+async function repoAfter(repo: GitRepo): Promise<GitRepo> {
+  const status = await relay
+    .request<GitStatusResult>("git.status", { repo: repo.path })
+    .catch(() => null);
+  return status?.repo ?? repo;
+}
+
+const MERGE_SUMMARY: Record<GitMergeResult["outcome"], (branch: string, count: number) => string> =
+  {
+    up_to_date: () => "Already up to date",
+    fast_forward: (branch) => `Fast-forwarded to ${branch}`,
+    merged: (branch) => `Merged ${branch}`,
+    conflicts: (branch, count) =>
+      `Merging ${branch} stopped at ${count === 1 ? "1 conflict" : `${count} conflicts`}`,
+  };
+
+export function mergeBranch(
+  repo: GitRepo,
+  target: MergeTarget,
+): Promise<Outcome<GitMergeResult & { repo: GitRepo }>> {
+  return act(
+    repo.path,
+    "merge",
+    `Merging ${target.branch} into ${repo.branch ?? "HEAD"}…`,
+    async () => {
+      const result = await relay.request<GitMergeResult>(
+        "git.merge",
+        { repo: repo.path, branch: target.branch, kind: target.kind },
+        GIT_WRITE_TIMEOUT_MS,
+      );
+      return { ...result, repo: await repoAfter(repo) };
+    },
+    (result) => ({
+      summary: MERGE_SUMMARY[result.outcome](target.branch, result.conflicts.length),
+      output: result.output,
+      attention: result.outcome === "conflicts",
+    }),
+  );
+}
+
+export function abortMerge(
+  repo: GitRepo,
+): Promise<Outcome<GitMergeAbortResult & { repo: GitRepo }>> {
+  return act(
+    repo.path,
+    "abort",
+    "Aborting the merge…",
+    async () => {
+      const result = await relay.request<GitMergeAbortResult>("git.merge_abort", {
+        repo: repo.path,
+      });
+      return { ...result, repo: await repoAfter(repo) };
+    },
+    () => ({ summary: "Merge aborted", output: "" }),
   );
 }
 

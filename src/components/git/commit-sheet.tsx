@@ -1,6 +1,6 @@
 import type { GitRepo } from "@shared/protocol";
 import { GitCommitHorizontalIcon, TriangleAlertIcon } from "lucide-react";
-import { type FormEvent, useId, useRef, useState } from "react";
+import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -90,6 +90,16 @@ function CommitForm({ repo, onCancel, onCommitted }: CommitFormProps) {
   const errorId = useId();
   const pushId = useId();
 
+  const merge = status.data?.merge;
+  const merging = repo.operation === "merge";
+  // The message git prepared for the merge goes in once, unless something was written already.
+  const prefilled = useRef(false);
+  useEffect(() => {
+    if (prefilled.current || !merge?.message) return;
+    prefilled.current = true;
+    setMessage((written) => (written.trim() === "" ? merge.message : written));
+  }, [merge]);
+
   const files = status.data?.files ?? null;
   const count = files?.length ?? repo.changed;
   const conflicts = files?.filter((file) => file.status === "conflicted").length ?? 0;
@@ -122,7 +132,7 @@ function CommitForm({ repo, onCancel, onCommitted }: CommitFormProps) {
     <form onSubmit={(event) => void submit(event)} className="flex flex-col">
       <SheetHeader className="pr-12">
         <SheetTitle>
-          Commit to{" "}
+          {merging ? "Commit merge into" : "Commit to"}{" "}
           <span className="font-mono text-[0.9375rem]" translate="no">
             {branchLabel(repo)}
           </span>
@@ -148,8 +158,9 @@ function CommitForm({ repo, onCancel, onCommitted }: CommitFormProps) {
             <TriangleAlertIcon />
             <AlertTitle>{plural(conflicts, "file")} still in conflict</AlertTitle>
             <AlertDescription>
-              Committing records {conflicts === 1 ? "it" : "them"} as{" "}
-              {conflicts === 1 ? "it is" : "they are"}, conflict markers and all.
+              {merge !== undefined
+                ? `Your Mac won’t commit while ${conflicts === 1 ? "it still holds" : "they still hold"} conflict markers. Resolve ${conflicts === 1 ? "it" : "them"} in Files first.`
+                : `Committing records ${conflicts === 1 ? "it as it is" : "them as they are"}, conflict markers and all.`}
             </AlertDescription>
           </Alert>
         ) : null}
@@ -242,9 +253,11 @@ function CommitForm({ repo, onCancel, onCommitted }: CommitFormProps) {
             <span className="truncate">
               {busy
                 ? "Committing…"
-                : count === 0
-                  ? "Commit"
-                  : `Commit ${plural(count, "file")}${thenPush ? (unpublished ? " and publish" : " and push") : ""}`}
+                : merging
+                  ? `Commit merge${thenPush ? (unpublished ? " and publish" : " and push") : ""}`
+                  : count === 0
+                    ? "Commit"
+                    : `Commit ${plural(count, "file")}${thenPush ? (unpublished ? " and publish" : " and push") : ""}`}
             </span>
           </Button>
         </div>

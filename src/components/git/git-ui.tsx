@@ -3,9 +3,20 @@ import { createContext, type ReactNode, use, useCallback, useMemo, useState } fr
 import { BranchPicker } from "@/components/git/branch-picker";
 import { CommitSheet } from "@/components/git/commit-sheet";
 import { DiscardDialog } from "@/components/git/discard-dialog";
+import { AbortMergeDialog, ConfirmMergeDialog, type Merging } from "@/components/git/merge-dialogs";
 import { MoreSheet } from "@/components/git/more-sheet";
 import { OutputSheet } from "@/components/git/output-sheet";
-import { discard, pull, push, switchBranch, type SwitchTarget } from "@/lib/git/store";
+import {
+  abortMerge,
+  discard,
+  mergeBranch,
+  type MergeTarget,
+  pull,
+  push,
+  switchBranch,
+  type SwitchTarget,
+} from "@/lib/git/store";
+import { mergeSupport } from "@/lib/probe";
 import { useConnection } from "@/lib/hooks";
 import { navigate, routes } from "@/lib/route";
 
@@ -21,6 +32,8 @@ export type GitUi = {
   pickBranch: (repo: GitRepo) => void;
   push: (repo: GitRepo) => void;
   pull: (repo: GitRepo) => void;
+  /** Asks before abandoning the merge in progress, named by the branch being merged. */
+  askAbortMerge: (repo: GitRepo, branch: string | null) => void;
 };
 
 const GitUiContext = createContext<GitUi | null>(null);
@@ -50,6 +63,10 @@ export function GitUiProvider({ children }: { children: ReactNode }) {
   const [discardOpen, setDiscardOpen] = useState(false);
   const [branching, setBranching] = useState<string | null>(null);
   const [branchOpen, setBranchOpen] = useState(false);
+  const [merging, setMerging] = useState<Merging | null>(null);
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [aborting, setAborting] = useState<{ repo: GitRepo; branch: string | null } | null>(null);
+  const [abortOpen, setAbortOpen] = useState(false);
 
   const showOutput = useCallback((repo: GitRepo) => {
     setOutput(repo.path);
@@ -79,6 +96,34 @@ export function GitUiProvider({ children }: { children: ReactNode }) {
     (repo: GitRepo, target: SwitchTarget) => {
       void switchBranch(repo, target).then((outcome) => {
         if (!outcome.ok && !outcome.pending) showOutput(repo);
+      });
+    },
+    [showOutput],
+  );
+
+  const askMerge = useCallback((repo: GitRepo, target: MergeTarget) => {
+    setMerging({ repo, target });
+    setMergeOpen(true);
+  }, []);
+
+  // A merge that stops at conflicts is not a failure: the repository's banner takes it from there.
+  const confirmMerge = useCallback(
+    ({ repo, target }: Merging) => {
+      setMergeOpen(false);
+      void mergeBranch(repo, target).then((outcome) => {
+        if (outcome.ok) return;
+        if (outcome.error.code === "not_supported") mergeSupport.unsupported();
+        showOutput(repo);
+      });
+    },
+    [showOutput],
+  );
+
+  const confirmAbort = useCallback(
+    (repo: GitRepo) => {
+      setAbortOpen(false);
+      void abortMerge(repo).then((outcome) => {
+        if (!outcome.ok) showOutput(repo);
       });
     },
     [showOutput],
@@ -124,6 +169,10 @@ export function GitUiProvider({ children }: { children: ReactNode }) {
       },
       push: runPush,
       pull: runPull,
+      askAbortMerge: (repo, branch) => {
+        setAborting({ repo, branch });
+        setAbortOpen(true);
+      },
     }),
     [canAct, showOutput, runPush, runPull],
   );
@@ -147,6 +196,20 @@ export function GitUiProvider({ children }: { children: ReactNode }) {
         open={branchOpen}
         onOpenChange={setBranchOpen}
         onPick={runSwitch}
+        onMerge={askMerge}
+      />
+      <ConfirmMergeDialog
+        merging={merging}
+        open={mergeOpen}
+        onCancel={() => setMergeOpen(false)}
+        onConfirm={confirmMerge}
+      />
+      <AbortMergeDialog
+        repo={aborting?.repo ?? null}
+        branch={aborting?.branch ?? null}
+        open={abortOpen}
+        onCancel={() => setAbortOpen(false)}
+        onConfirm={confirmAbort}
       />
       <DiscardDialog
         target={discarding}

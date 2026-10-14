@@ -20,15 +20,17 @@ export function ActivityLine({ repo, className }: { repo: GitRepo; className?: s
         "flex min-h-9 items-center gap-2 text-[0.8125rem] leading-5",
         failed
           ? "text-destructive"
-          : activity.state === "done"
-            ? "text-settled"
-            : "text-muted-foreground",
+          : activity.attention
+            ? "text-amber"
+            : activity.state === "done"
+              ? "text-settled"
+              : "text-muted-foreground",
         className,
       )}
     >
       {activity.state === "running" ? (
         <Spinner className="size-3.5 shrink-0" aria-hidden="true" />
-      ) : failed ? (
+      ) : failed || activity.attention ? (
         <CircleAlertIcon aria-hidden="true" className="size-3.5 shrink-0" />
       ) : (
         <CheckIcon aria-hidden="true" className="size-3.5 shrink-0" />

@@ -52,7 +52,13 @@ export function RepoActions({ repo, layout, className }: RepoActionsProps) {
       ) : (
         <GitCommitHorizontalIcon data-icon="inline-start" />
       )}
-      <span className="truncate">{committable ? "Commit…" : "Nothing to commit"}</span>
+      <span className="truncate">
+        {repo.operation === "merge"
+          ? "Commit merge…"
+          : committable
+            ? "Commit…"
+            : "Nothing to commit"}
+      </span>
       {repo.changed > 0 ? (
         <span className="font-mono text-[0.8125rem] tabular-nums opacity-75">{repo.changed}</span>
       ) : null}
