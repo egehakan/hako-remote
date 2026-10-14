@@ -29,3 +29,15 @@ export async function createFolder(directory: string): Promise<string> {
   await workspaceStore.refresh();
   return created.folder_id;
 }
+
+/** Gives a tab a title of its own, or with `null` its automatic title back, once it is listed. */
+export async function renameTab(tabId: string, title: string | null): Promise<void> {
+  await relay.request("tab.rename", { tab_id: tabId, title });
+  await workspaceStore.refresh();
+}
+
+/** Gives a folder a name of its own, or with `null` its default name back, once it is listed. */
+export async function renameFolder(folderId: string, name: string | null): Promise<void> {
+  await relay.request("folder.rename", { folder_id: folderId, name });
+  await workspaceStore.refresh();
+}

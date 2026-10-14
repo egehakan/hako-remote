@@ -1,11 +1,12 @@
 import type { Folder, Tab, Window } from "@shared/protocol";
-import { PlusIcon, XIcon } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { EllipsisIcon, PlusIcon, XIcon } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { AgentBadge } from "@/components/agent-badge";
 import { FolderIcon } from "@/components/folder-icon";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { useWorkspaceActions } from "@/components/workspace-actions";
+import { ItemMenu, type MenuTarget, RenameDialog } from "@/components/workspace-menus";
 import { relativeTo, tildify } from "@/lib/paths";
 import { routes } from "@/lib/route";
 import { cn } from "@/lib/utils";
@@ -17,8 +18,17 @@ type WorkspaceListProps = {
   selectedTabId: string | null;
 };
 
+type OpenMenu = (target: MenuTarget) => void;
+
 export function WorkspaceList({ windows, selectedTabId }: WorkspaceListProps) {
   const several = windows.length > 1;
+  const [menu, setMenu] = useState<MenuTarget | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [renaming, setRenaming] = useState<MenuTarget | null>(null);
+  const openMenu = (target: MenuTarget) => {
+    setMenu(target);
+    setMenuOpen(true);
+  };
   if (windows.length === 0) {
     return (
       <p className="px-1 py-8 text-center text-sm leading-6 text-muted-foreground">
@@ -38,9 +48,11 @@ export function WorkspaceList({ windows, selectedTabId }: WorkspaceListProps) {
               ) : null}
             </h2>
           ) : null}
-          <WindowContents window={window} selectedTabId={selectedTabId} />
+          <WindowContents window={window} selectedTabId={selectedTabId} onMenu={openMenu} />
         </section>
       ))}
+      <ItemMenu target={menu} open={menuOpen} onOpenChange={setMenuOpen} onRename={setRenaming} />
+      <RenameDialog target={renaming} onClose={() => setRenaming(null)} />
     </div>
   );
 }
@@ -48,9 +60,11 @@ export function WorkspaceList({ windows, selectedTabId }: WorkspaceListProps) {
 function WindowContents({
   window,
   selectedTabId,
+  onMenu,
 }: {
   window: Window;
   selectedTabId: string | null;
+  onMenu: OpenMenu;
 }) {
   const loose = window.tabs.filter(
     (tab) =>
@@ -68,6 +82,7 @@ function WindowContents({
           tabs={window.tabs.filter((tab) => tab.folder_id === folder.id)}
           windowActive={window.active}
           selectedTabId={selectedTabId}
+          onMenu={onMenu}
         />
       ))}
       {loose.length > 0 ? (
@@ -83,6 +98,7 @@ function WindowContents({
                 directory={null}
                 front={window.active && tab.active}
                 selected={tab.id === selectedTabId}
+                onMenu={onMenu}
               />
             ))}
           </ul>
@@ -97,10 +113,11 @@ type FolderBoxProps = {
   tabs: Tab[];
   windowActive: boolean;
   selectedTabId: string | null;
+  onMenu: OpenMenu;
 };
 
 /** A folder drawn as a box: a lid in the folder's colour, and its tabs inside. */
-function FolderBox({ folder, tabs, windowActive, selectedTabId }: FolderBoxProps) {
+function FolderBox({ folder, tabs, windowActive, selectedTabId, onMenu }: FolderBoxProps) {
   const { canAct, creatingIn, newTab, arrivedFolderId } = useWorkspaceActions();
   const creating = creatingIn === folder.id;
   const arrived = arrivedFolderId === folder.id;
@@ -134,6 +151,15 @@ function FolderBox({ folder, tabs, windowActive, selectedTabId }: FolderBoxProps
           </p>
         </div>
         <Button
+          variant="ghost"
+          size="icon-touch"
+          className="text-muted-foreground"
+          aria-label={`More for the folder ${folder.name}`}
+          onClick={() => onMenu({ kind: "folder", folder })}
+        >
+          <EllipsisIcon />
+        </Button>
+        <Button
           variant="secondary"
           size="icon-touch"
           aria-label={`New terminal in ${folder.name}`}
@@ -152,6 +178,7 @@ function FolderBox({ folder, tabs, windowActive, selectedTabId }: FolderBoxProps
               directory={folder.directory}
               front={windowActive && tab.active}
               selected={tab.id === selectedTabId}
+              onMenu={onMenu}
             />
           ))}
         </ul>
@@ -171,9 +198,10 @@ type TabRowProps = {
   /** True for the tab that is in front on the Mac right now. */
   front: boolean;
   selected: boolean;
+  onMenu: OpenMenu;
 };
 
-function TabRow({ tab, directory, front, selected }: TabRowProps) {
+function TabRow({ tab, directory, front, selected, onMenu }: TabRowProps) {
   const { canAct, openTab, askToClose } = useWorkspaceActions();
   const agent = tabAgent(tab);
   const lead = leadTerminal(tab);
@@ -223,6 +251,15 @@ function TabRow({ tab, directory, front, selected }: TabRowProps) {
           </span>
         ) : null}
       </a>
+      <Button
+        variant="ghost"
+        size="icon-touch"
+        className="my-1 self-center text-muted-foreground"
+        aria-label={`More for the tab ${tab.title}`}
+        onClick={() => onMenu({ kind: "tab", tab })}
+      >
+        <EllipsisIcon />
+      </Button>
       <Button
         variant="ghost"
         size="icon-touch"
