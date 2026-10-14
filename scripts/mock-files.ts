@@ -621,7 +621,7 @@ function createTransferFixture(directory: string): void {
     patternedBytes(5 * TRANSFER_CHUNK_BYTES + 321, 11),
   );
   writeFileSync(join(directory, CHANGING_FILE), patternedBytes(CHANGING_FILE_BYTES, 23));
-  sparseFile(join(directory, "fifty-megabytes.bin"), TRANSFER_MAX_BYTES);
+  sparseFile(join(directory, "at-the-limit.bin"), TRANSFER_MAX_BYTES);
   sparseFile(join(directory, "over-the-limit.bin"), TRANSFER_MAX_BYTES + 1);
   mkdirSync(join(directory, "read-only-folder"));
   chmodSync(join(directory, "read-only-folder"), 0o555);

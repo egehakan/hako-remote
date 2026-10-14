@@ -22,6 +22,10 @@
 // made in it. MOCK_FOLDERS=0 leaves `folder.create` and `fs.mkdir` out, as the desktop app before
 // them would.
 //
+// Files and folders can be created, renamed, copied, moved, put in a "Trash" directory at the top
+// of that tree, zipped and unzipped there (round 1). MOCK_OPS=0 leaves those methods out, as the
+// desktop app before them would, and MOCK_OPS_DELAY_MS=4000 makes them slow.
+//
 // Files travel in both directions through the transfer methods: downloads out of that tree, uploads
 // into it, and uploads into a throwaway "uploads area" that is removed at exit. `kill -USR2` also
 // rewrites Downloads/changes-while-read.bin, a file of several pieces. MOCK_TRANSFERS=0 leaves
@@ -80,6 +84,8 @@ import {
   rewriteChangingFile,
   rewriteConflictFile,
 } from "./mock-files.ts";
+import { createDocumentFixture } from "./mock-documents.ts";
+import { createOperationMethods, LimitFailure } from "./mock-operations.ts";
 import { createTransferMethods } from "./mock-transfers.ts";
 
 const RELAY_URL = process.env.RELAY_URL ?? `ws://localhost:${process.env.PORT ?? 8787}/ws/agent`;
@@ -88,6 +94,8 @@ const FS_ENABLED = process.env.MOCK_FS !== "0";
 const FS_DELAY_MS = Number(process.env.MOCK_FS_DELAY_MS ?? 0);
 const TRANSFERS_ENABLED = FS_ENABLED && process.env.MOCK_TRANSFERS !== "0";
 const FOLDERS_ENABLED = process.env.MOCK_FOLDERS !== "0";
+const OPS_ENABLED = FS_ENABLED && process.env.MOCK_OPS !== "0";
+const OPS_DELAY_MS = Number(process.env.MOCK_OPS_DELAY_MS ?? 0);
 const GIT_ENABLED = process.env.MOCK_GIT !== "0";
 const GIT_DELAY_MS = Number(process.env.MOCK_GIT_DELAY_MS ?? 0);
 const DEFAULT_COLS = 120;
@@ -106,6 +114,7 @@ if (AGENT_KEY === "") {
 
 /** The home directory of the sample workspace: the root of the fixture tree. */
 const HOME = createFixture();
+await createDocumentFixture(HOME);
 const GIT_FIXTURE = GIT_ENABLED ? createGitFixture(HOME) : null;
 
 class RpcFailure extends Error {
@@ -681,8 +690,14 @@ const transfers = TRANSFERS_ENABLED
       log: (line) => console.log(line),
     })
   : null;
+const operations = OPS_ENABLED
+  ? createOperationMethods(HOME, {
+      folderDirectories: () =>
+        windows.flatMap((window) => window.folders.map((folder) => folder.directory)),
+    })
+  : null;
 const fsMethods: Record<string, Method> = FS_ENABLED
-  ? { ...createFsMethods(HOME, () => windows), ...transfers?.methods }
+  ? { ...createFsMethods(HOME, () => windows), ...transfers?.methods, ...operations?.methods }
   : {};
 if (!FOLDERS_ENABLED) delete fsMethods["fs.mkdir"];
 const gitMethods: Record<string, Method> = GIT_ENABLED
@@ -715,7 +730,9 @@ function handleFrame(text: string): void {
   if (frame.t !== "req" || typeof frame.id !== "string" || typeof frame.method !== "string") return;
 
   const id = frame.id;
-  const delay = Object.hasOwn(fsMethods, frame.method)
+  const delay = Object.hasOwn(operations?.methods ?? {}, frame.method)
+    ? FS_DELAY_MS + OPS_DELAY_MS
+    : Object.hasOwn(fsMethods, frame.method)
     ? FS_DELAY_MS
     : Object.hasOwn(gitMethods, frame.method)
       ? GIT_DELAY_MS
@@ -738,7 +755,13 @@ function handleFrame(text: string): void {
     const known =
       error instanceof RpcFailure || error instanceof FsFailure || error instanceof GitFailure;
     const message = error instanceof Error ? error.message : "Failed";
-    send({ t: "res", id, ok: false, error: { code: known ? error.code : "failed", message } });
+    const limit = error instanceof LimitFailure ? { limit: error.limit } : {};
+    send({
+      t: "res",
+      id,
+      ok: false,
+      error: { code: known ? error.code : "failed", message, ...limit },
+    });
   };
   const answer = () => {
     try {
@@ -987,6 +1010,8 @@ if (transfers) {
 }
 
 if (!FOLDERS_ENABLED) console.log("folder.create and fs.mkdir are off (MOCK_FOLDERS=0)");
+if (operations) console.log(`the Trash is ${operations.trash}`);
+else if (FS_ENABLED) console.log("renaming, copying, zipping and the rest are off (MOCK_OPS=0)");
 
 if (GIT_FIXTURE) {
   console.log(
