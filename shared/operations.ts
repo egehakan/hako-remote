@@ -52,11 +52,7 @@ export function keepBothNameFor(name: string, isDirectory: boolean, n: number): 
  * as a Mac's disk compares them by default: without regard to letter case or Unicode
  * normalisation.
  */
-export function firstFreeName(
-  name: string,
-  isDirectory: boolean,
-  taken: Iterable<string>,
-): string {
+export function firstFreeName(name: string, isDirectory: boolean, taken: Iterable<string>): string {
   const used = new Set(Array.from(taken, sameNameKey));
   if (!used.has(sameNameKey(name))) return name;
   for (let n = 2; ; n++) {

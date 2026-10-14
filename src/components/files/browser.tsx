@@ -4,10 +4,14 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   CircleAlertIcon,
+  CircleCheckIcon,
+  CircleIcon,
+  EllipsisIcon,
   EllipsisVerticalIcon,
   EyeIcon,
   EyeOffIcon,
   HouseIcon,
+  PlusIcon,
   RefreshCwIcon,
   SearchIcon,
   SquareTerminalIcon,
@@ -16,16 +20,18 @@ import {
 } from "lucide-react";
 import {
   memo,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
-  useCallback,
   useDeferredValue,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import type { MenuTarget } from "@/components/files/entry-menu";
+import { ClipboardBar, useFileActions } from "@/components/files/file-actions";
 import { FileKindIcon } from "@/components/files/file-icon";
-import { FileMenu, type MenuFile } from "@/components/files/save-file";
 import { FsProblem, ListSkeleton } from "@/components/files/states";
 import { TransferTray } from "@/components/files/transfer-tray";
 import { VirtualList } from "@/components/files/virtual-list";
@@ -41,7 +47,6 @@ import { filesPrefs, useFilesPrefs, useListing, useRoots } from "@/lib/files/sto
 import { useConnection, useWorkspace } from "@/lib/hooks";
 import { tildify } from "@/lib/paths";
 import { navigate, routes } from "@/lib/route";
-import { uploadFiles } from "@/lib/transfers/actions";
 import { useTransferSupport } from "@/lib/transfers/store";
 import { cn } from "@/lib/utils";
 
@@ -72,6 +77,8 @@ type BrowserHeaderProps = {
   canRefresh: boolean;
   onRefresh: () => void;
   actions?: ReactNode;
+  /** Stands in for the title row, at its height, while items are being chosen. */
+  replacement?: ReactNode;
   children?: ReactNode;
 };
 
@@ -82,45 +89,48 @@ function BrowserHeader({
   canRefresh,
   onRefresh,
   actions,
+  replacement,
   children,
 }: BrowserHeaderProps) {
   return (
     <header className="shrink-0 border-b pt-safe">
-      <div
-        className={cn(
-          "flex items-center gap-0.5 pr-[max(0.375rem,env(safe-area-inset-right))]",
-          up
-            ? "pl-[max(0.125rem,env(safe-area-inset-left))]"
-            : "pl-[max(1rem,env(safe-area-inset-left))]",
-        )}
-      >
-        {up ? (
+      {replacement ?? (
+        <div
+          className={cn(
+            "flex items-center gap-0.5 pr-[max(0.375rem,env(safe-area-inset-right))]",
+            up
+              ? "pl-[max(0.125rem,env(safe-area-inset-left))]"
+              : "pl-[max(1rem,env(safe-area-inset-left))]",
+          )}
+        >
+          {up ? (
+            <Button
+              variant="ghost"
+              size="icon-touch"
+              className="size-11"
+              aria-label={up.label}
+              nativeButton={false}
+              render={<a href={up.href} />}
+            >
+              <ChevronLeftIcon />
+            </Button>
+          ) : null}
+          <h1 className="min-w-0 flex-1 truncate py-3.5 text-[1.0625rem] leading-6 font-semibold tracking-[-0.01em]">
+            {title}
+          </h1>
+          {actions}
           <Button
             variant="ghost"
             size="icon-touch"
             className="size-11"
-            aria-label={up.label}
-            nativeButton={false}
-            render={<a href={up.href} />}
+            aria-label="Refresh"
+            disabled={loading || !canRefresh}
+            onClick={onRefresh}
           >
-            <ChevronLeftIcon />
+            <RefreshCwIcon className={cn(loading && "motion-safe:animate-spin")} />
           </Button>
-        ) : null}
-        <h1 className="min-w-0 flex-1 truncate py-3.5 text-[1.0625rem] leading-6 font-semibold tracking-[-0.01em]">
-          {title}
-        </h1>
-        {actions}
-        <Button
-          variant="ghost"
-          size="icon-touch"
-          className="size-11"
-          aria-label="Refresh"
-          disabled={loading || !canRefresh}
-          onClick={onRefresh}
-        >
-          <RefreshCwIcon className={cn(loading && "motion-safe:animate-spin")} />
-        </Button>
-      </div>
+        </div>
+      )}
       {children}
     </header>
   );
@@ -257,13 +267,6 @@ function DirectoryList({ path, selectedFile, offline }: DirectoryListProps) {
   const [filter, setFilter] = useState("");
   const needle = useDeferredValue(filter).trim().toLowerCase();
   const support = useTransferSupport();
-  const picker = useRef<HTMLInputElement>(null);
-  const [menu, setMenu] = useState<MenuFile | null>(null);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const openMenu = useCallback((file: MenuFile) => {
-    setMenu(file);
-    setMenuOpen(true);
-  }, []);
 
   const root = rootFor(path, roots.data?.roots ?? []);
   const rootPath = root?.path ?? null;
@@ -299,6 +302,10 @@ function DirectoryList({ path, selectedFile, offline }: DirectoryListProps) {
     return { visible, hiddenCount };
   }, [rows, showHidden, needle]);
 
+  const visibleNames = useMemo(() => visible.map((row) => row.entry.name), [visible]);
+  const actions = useFileActions({ path, entries: data?.entries ?? [], visibleNames });
+  const { selecting, selected, toggle, openMenu } = actions;
+
   const parent = parentOf(path);
   const atRoot = rootPath === path;
   const up =
@@ -319,17 +326,48 @@ function DirectoryList({ path, selectedFile, offline }: DirectoryListProps) {
         loading={loading}
         canRefresh={!offline}
         onRefresh={reload}
+        replacement={
+          selecting ? (
+            <SelectionHeader
+              count={selected.size}
+              total={visible.length}
+              onAll={actions.selectAll}
+              onDone={actions.exit}
+            />
+          ) : undefined
+        }
         actions={
-          <Button
-            variant="ghost"
-            size="icon-touch"
-            className={cn("size-11", showHidden && "text-lid")}
-            aria-label="Show hidden files"
-            aria-pressed={showHidden}
-            onClick={() => filesPrefs.set({ showHidden: !showHidden })}
-          >
-            {showHidden ? <EyeIcon /> : <EyeOffIcon />}
-          </Button>
+          <>
+            <Button
+              variant="ghost"
+              size="icon-touch"
+              className={cn("size-11", showHidden && "text-lid")}
+              aria-label="Show hidden files"
+              aria-pressed={showHidden}
+              onClick={() => filesPrefs.set({ showHidden: !showHidden })}
+            >
+              {showHidden ? <EyeIcon /> : <EyeOffIcon />}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-touch"
+              className="size-11"
+              aria-label="More for this folder"
+              aria-haspopup="dialog"
+              disabled={data === null}
+              onClick={() =>
+                openMenu({
+                  path,
+                  name: atRoot && root ? root.name : baseName(path),
+                  isDirectory: true,
+                  size: 0,
+                  here: true,
+                })
+              }
+            >
+              <EllipsisIcon />
+            </Button>
+          </>
         }
       >
         <nav
@@ -415,7 +453,10 @@ function DirectoryList({ path, selectedFile, offline }: DirectoryListProps) {
                   entry={row.entry}
                   path={row.path}
                   selected={row.path === selectedFile}
+                  selecting={selecting}
+                  checked={selected.has(row.entry.name)}
                   onMenu={openMenu}
+                  onToggle={toggle}
                 />
               )}
               scrollKey={path}
@@ -444,46 +485,57 @@ function DirectoryList({ path, selectedFile, offline }: DirectoryListProps) {
             </div>
           )}
           <TransferTray />
-          <footer className="flex shrink-0 items-center gap-3 border-t py-1.5 pr-[max(0.5rem,env(safe-area-inset-right))] pl-[max(1rem,env(safe-area-inset-left))]">
-            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <p role="status" className="font-mono text-[0.6875rem] leading-4 text-faint">
-                {needle !== ""
-                  ? `${formatCount(visible.length)} of ${formatCount(total)}`
-                  : `${formatCount(total)} ${total === 1 ? "item" : "items"}`}
-                {!showHidden && hiddenCount > 0 ? `, ${formatCount(hiddenCount)} hidden` : ""}
-                {data.truncated ? ". Your Mac sent only the first 20,000." : ""}
-              </p>
-              {support.state === "no" ? (
-                <p className="text-[0.75rem] leading-4 text-muted-foreground">
-                  {NEEDS_NEWER_HAKO} The version running there can’t take or hand over files yet.
-                </p>
+          {selecting ? (
+            actions.selectionBar
+          ) : (
+            <>
+              {actions.clipboard ? (
+                <ClipboardBar
+                  clipboard={actions.clipboard}
+                  directory={path}
+                  enabled={actions.canChange}
+                  onPaste={() => void actions.pasteHere()}
+                />
               ) : null}
-            </div>
-            <Button
-              variant="secondary"
-              className="h-10 px-3.5"
-              disabled={support.state === "no"}
-              onClick={() => picker.current?.click()}
-            >
-              <UploadIcon data-icon="inline-start" />
-              Upload
-            </Button>
-            {/* No `accept`: an iPhone then offers its photo library, its camera and its files. */}
-            <input
-              ref={picker}
-              type="file"
-              multiple
-              tabIndex={-1}
-              aria-hidden="true"
-              className="sr-only"
-              onChange={(event) => {
-                uploadFiles(path, Array.from(event.target.files ?? []));
-                // Emptied so that picking the same file again is a change too.
-                event.target.value = "";
-              }}
-            />
-          </footer>
-          <FileMenu file={menu} open={menuOpen} onOpenChange={setMenuOpen} />
+              <footer className="flex shrink-0 items-center gap-2 border-t py-1.5 pr-[max(0.5rem,env(safe-area-inset-right))] pl-[max(1rem,env(safe-area-inset-left))]">
+                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <p role="status" className="font-mono text-[0.6875rem] leading-4 text-faint">
+                    {needle !== ""
+                      ? `${formatCount(visible.length)} of ${formatCount(total)}`
+                      : `${formatCount(total)} ${total === 1 ? "item" : "items"}`}
+                    {!showHidden && hiddenCount > 0 ? `, ${formatCount(hiddenCount)} hidden` : ""}
+                    {data.truncated ? ". Your Mac sent only the first 20,000." : ""}
+                  </p>
+                  {support.state === "no" ? (
+                    <p className="text-[0.75rem] leading-4 text-muted-foreground">
+                      {NEEDS_NEWER_HAKO} The version running there can’t take or hand over files
+                      yet.
+                    </p>
+                  ) : null}
+                </div>
+                <Button
+                  variant="secondary"
+                  className="h-10 px-3"
+                  aria-haspopup="dialog"
+                  onClick={actions.openNew}
+                >
+                  <PlusIcon data-icon="inline-start" />
+                  New
+                </Button>
+                <Button
+                  variant="secondary"
+                  className="h-10 px-3"
+                  aria-haspopup="dialog"
+                  disabled={support.state === "no"}
+                  onClick={actions.openUpload}
+                >
+                  <UploadIcon data-icon="inline-start" />
+                  Upload
+                </Button>
+              </footer>
+            </>
+          )}
+          {actions.dialogs}
         </>
       ) : error && !isFile ? (
         <main className="min-h-0 flex-1 overflow-y-auto">
@@ -514,14 +566,127 @@ function DirectoryList({ path, selectedFile, offline }: DirectoryListProps) {
   );
 }
 
+type SelectionHeaderProps = {
+  count: number;
+  total: number;
+  onAll: () => void;
+  onDone: () => void;
+};
+
+/** Stands in for the folder's title row while items are being chosen, at the same height. */
+function SelectionHeader({ count, total, onAll, onDone }: SelectionHeaderProps) {
+  return (
+    <div className="flex items-center gap-1 pr-[max(0.375rem,env(safe-area-inset-right))] pl-[max(0.375rem,env(safe-area-inset-left))]">
+      <Button variant="ghost" className="h-11 px-3 text-base" onClick={onDone}>
+        Done
+      </Button>
+      <h1
+        className="min-w-0 flex-1 truncate py-3.5 text-center text-[1.0625rem] leading-6 font-semibold tabular-nums"
+        role="status"
+      >
+        {count === 0 ? "Select items" : `${count.toLocaleString()} selected`}
+      </h1>
+      <Button
+        variant="ghost"
+        className="h-11 px-3 text-base"
+        disabled={total === 0 || count === total}
+        onClick={onAll}
+      >
+        Select all
+      </Button>
+    </div>
+  );
+}
+
+const LONG_PRESS_MS = 450;
+const LONG_PRESS_SLOP = 10;
+
+/**
+ * The rows change under a finger that has just started a selection, so the tap its lifting makes
+ * lands on whatever is there now. That one tap is taken away before anything sees it.
+ */
+function swallowNextClick(): void {
+  const swallow = (event: Event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    stop();
+  };
+  const stop = () => {
+    window.clearTimeout(timer);
+    document.removeEventListener("click", swallow, true);
+    document.removeEventListener("pointerup", lifted, true);
+  };
+  // The finger may stay down a while; the tap comes only once it is lifted.
+  const lifted = () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(stop, 400);
+  };
+  let timer = window.setTimeout(stop, 10_000);
+  document.addEventListener("click", swallow, true);
+  document.addEventListener("pointerup", lifted, true);
+}
+
+/**
+ * A finger held on a row starts choosing, with that row chosen. The tap that the lifted finger
+ * makes afterwards is swallowed, so the row does not open as well.
+ */
+function useLongPress(onLongPress: () => void) {
+  const timer = useRef<number | null>(null);
+  const start = useRef<{ x: number; y: number } | null>(null);
+  const fired = useRef(false);
+  const cancel = () => {
+    if (timer.current !== null) window.clearTimeout(timer.current);
+    timer.current = null;
+    start.current = null;
+  };
+  useEffect(() => cancel, []);
+  return {
+    onPointerDown: (event: ReactPointerEvent) => {
+      fired.current = false;
+      if (event.pointerType !== "touch") return;
+      start.current = { x: event.clientX, y: event.clientY };
+      timer.current = window.setTimeout(() => {
+        fired.current = true;
+        timer.current = null;
+        swallowNextClick();
+        onLongPress();
+      }, LONG_PRESS_MS);
+    },
+    onPointerMove: (event: ReactPointerEvent) => {
+      const from = start.current;
+      if (from && Math.hypot(event.clientX - from.x, event.clientY - from.y) > LONG_PRESS_SLOP) {
+        cancel();
+      }
+    },
+    onPointerUp: cancel,
+    onPointerCancel: cancel,
+    onContextMenu: (event: ReactMouseEvent) => {
+      // A held finger on Android also opens the browser's own menu for the link.
+      if (fired.current || timer.current !== null) event.preventDefault();
+    },
+  };
+}
+
 type EntryRowProps = {
   entry: FsEntry;
   path: string;
   selected: boolean;
-  onMenu: (file: MenuFile) => void;
+  /** True while items are being chosen: a tap chooses instead of opening. */
+  selecting: boolean;
+  checked: boolean;
+  onMenu: (target: MenuTarget) => void;
+  onToggle: (name: string, range?: boolean) => void;
 };
 
-const EntryRow = memo(function EntryRow({ entry, path, selected, onMenu }: EntryRowProps) {
+const EntryRow = memo(function EntryRow({
+  entry,
+  path,
+  selected,
+  selecting,
+  checked,
+  onMenu,
+  onToggle,
+}: EntryRowProps) {
   const directory = isDirectory(entry);
   const openable = directory || entry.kind === "file" || entry.target === "file";
   const hidden = entry.name.startsWith(".");
@@ -533,9 +698,24 @@ const EntryRow = memo(function EntryRow({ entry, path, selected, onMenu }: Entry
         : entry.kind === "other"
           ? "not a file"
           : null;
+  const press = useLongPress(() => onToggle(entry.name));
+  const target: MenuTarget = {
+    path,
+    name: entry.name,
+    isDirectory: directory,
+    size: entry.size,
+    here: false,
+  };
 
   const contents = (
     <>
+      {selecting ? (
+        checked ? (
+          <CircleCheckIcon aria-hidden="true" className="size-5 shrink-0 text-lid" />
+        ) : (
+          <CircleIcon aria-hidden="true" className="size-5 shrink-0 text-faint" />
+        )
+      ) : null}
       <FileKindIcon entry={entry} />
       <span
         className={cn(
@@ -557,48 +737,92 @@ const EntryRow = memo(function EntryRow({ entry, path, selected, onMenu }: Entry
           {formatModified(entry.mtime)}
         </span>
       </span>
-      {directory ? (
+      {directory && !selecting ? (
         <ChevronRightIcon aria-hidden="true" className="size-4 shrink-0 text-faint" />
       ) : null}
     </>
   );
 
-  const layout = "flex h-12 items-center gap-3 px-safe";
-  if (!openable) {
-    return (
-      <div className={cn(layout, "opacity-70")} aria-disabled="true">
-        {contents}
-      </div>
-    );
-  }
-  const link =
+  const focus =
     "outline-none hover:bg-accent/50 focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset";
-  if (directory) {
+  // A held finger must not bring up the system's preview of a link or start choosing text.
+  const holdable = "select-none [-webkit-touch-callout:none]";
+
+  if (selecting) {
     return (
-      <a href={routes.dir(path)} className={cn(layout, link)}>
-        {contents}
-      </a>
-    );
-  }
-  // A file's row ends in its menu, which stands where a folder's row has its chevron.
-  return (
-    <div className={cn("flex h-12 items-stretch", selected && "bg-accent")}>
-      <a
-        href={routes.file(path)}
-        aria-current={selected ? "page" : undefined}
+      <button
+        type="button"
+        role="checkbox"
+        aria-checked={checked}
+        data-entry={entry.name}
         className={cn(
-          "flex min-w-0 flex-1 items-center gap-3 pl-[max(1rem,env(safe-area-inset-left))]",
-          link,
+          "flex h-12 w-full items-center gap-3 px-safe text-left",
+          focus,
+          holdable,
+          checked && "bg-accent/70",
         )}
+        onClick={(event) => onToggle(entry.name, event.shiftKey)}
       >
         {contents}
-      </a>
+      </button>
+    );
+  }
+
+  /** Cmd- or Ctrl-click chooses a row, and Shift-click a run of rows, as in Finder. */
+  const chooseWithKeys = (event: ReactMouseEvent) => {
+    if (!(event.metaKey || event.ctrlKey || event.shiftKey)) return;
+    event.preventDefault();
+    onToggle(entry.name, event.shiftKey);
+  };
+  const openMenuWithMouse = (event: ReactMouseEvent) => {
+    press.onContextMenu(event);
+    if (event.defaultPrevented) return;
+    event.preventDefault();
+    onMenu(target);
+  };
+
+  const layout = "flex h-12 items-center gap-3 px-safe";
+  const main = !openable ? (
+    <div
+      data-entry={entry.name}
+      tabIndex={0}
+      className={cn(layout, "min-w-0 flex-1 opacity-70", focus, holdable)}
+      aria-disabled="true"
+      {...press}
+      onClick={chooseWithKeys}
+      onContextMenu={openMenuWithMouse}
+    >
+      {contents}
+    </div>
+  ) : (
+    <a
+      href={directory ? routes.dir(path) : routes.file(path)}
+      data-entry={entry.name}
+      aria-current={selected ? "page" : undefined}
+      className={cn(
+        "flex min-w-0 flex-1 items-center gap-3 pl-[max(1rem,env(safe-area-inset-left))]",
+        focus,
+        holdable,
+      )}
+      draggable={false}
+      {...press}
+      onClick={chooseWithKeys}
+      onContextMenu={openMenuWithMouse}
+    >
+      {contents}
+    </a>
+  );
+
+  // Every row ends in its menu, after a folder's chevron.
+  return (
+    <div className={cn("flex h-12 items-stretch", selected && "bg-accent")}>
+      {main}
       <button
         type="button"
         aria-label={`More for ${entry.name}`}
         aria-haspopup="dialog"
         className="flex w-[calc(2.75rem+max(0px,env(safe-area-inset-right)-0.75rem))] shrink-0 items-center justify-center pr-[max(0px,env(safe-area-inset-right)-0.75rem)] text-faint outline-none hover:bg-accent/50 hover:text-foreground focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset"
-        onClick={() => onMenu({ path, name: entry.name, size: entry.size })}
+        onClick={() => onMenu(target)}
       >
         <EllipsisVerticalIcon aria-hidden="true" className="size-4" />
       </button>

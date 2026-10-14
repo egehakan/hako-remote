@@ -56,6 +56,7 @@
   --animate-lid-lift: lid-lift 1.6s ease-in-out infinite;
   --animate-working: working 1.2s steps(4, end) infinite;
   --animate-arrive: arrive 2.4s ease-out;
+  --animate-op-slide: op-slide 1.4s ease-in-out infinite;
 
   @keyframes lid-lift {
     0%,
@@ -64,6 +65,16 @@
     }
     50% {
       transform: translateY(-9%);
+    }
+  }
+
+  /* Work on the Mac that says nothing of how far along it is. */
+  @keyframes op-slide {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(300%);
     }
   }
 
@@ -379,6 +390,11 @@
 .markdown hr {
   border: 0;
   border-top: 1px solid var(--border);
+}
+
+.markdown img {
+  max-width: 100%;
+  height: auto;
 }
 
 .markdown .md-picture {

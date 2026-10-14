@@ -8,7 +8,11 @@ import {
   XIcon,
 } from "lucide-react";
 import { type ReactNode, useEffect } from "react";
+import { OperationRows } from "@/components/files/operations-tray";
 import { Button } from "@/components/ui/button";
+import { isZip } from "@/components/files/entry-menu";
+import { extractHere, useOperations, useOpsSupport } from "@/lib/files/operations";
+import { parentOf } from "@/lib/files/paths";
 import { formatSize } from "@/lib/files/format";
 import { handOver } from "@/lib/transfers/actions";
 import { describeTransferFailure, fraction, progressLabel } from "@/lib/transfers/describe";
@@ -25,7 +29,8 @@ const SETTLED_FOR_MS = 4_000;
  */
 export function TransferTray({ className }: { className?: string }) {
   const items = useTransfers(FILES_GROUP);
-  if (items.length === 0) return null;
+  const operations = useOperations();
+  if (items.length === 0 && operations.length === 0) return null;
   return (
     <section
       aria-label="Transfers"
@@ -35,6 +40,7 @@ export function TransferTray({ className }: { className?: string }) {
       )}
     >
       <ul className="divide-y">
+        <OperationRows items={operations} />
         {items.map((item) => (
           <TransferRow key={item.id} item={item} />
         ))}
@@ -46,7 +52,10 @@ export function TransferTray({ className }: { className?: string }) {
 function TransferRow({ item }: { item: Transfer }) {
   const { limits } = useTransferSupport();
   const upload = item.direction === "upload";
-  const settled = item.state === "done" && (upload || item.delivered);
+  const ops = useOpsSupport();
+  // An uploaded zip stays, for "Extract here".
+  const zip = upload && item.uploaded !== null && isZip(item.uploaded.name) && ops === "yes";
+  const settled = item.state === "done" && ((upload && !zip) || item.delivered);
   useEffect(() => {
     if (!settled) return;
     const timer = window.setTimeout(() => transfers.dismiss(item.id), SETTLED_FOR_MS);
@@ -78,6 +87,25 @@ function TransferRow({ item }: { item: Transfer }) {
   );
 
   switch (item.state) {
+    case "confirm":
+      status = `${formatSize(item.total ?? 0)}, held in this device’s memory until it is saved.`;
+      actions = (
+        <IconAction
+          label={`Don’t download ${item.name}`}
+          onClick={() => {
+            transfers.cancel(item.id);
+            transfers.dismiss(item.id);
+          }}
+        >
+          <XIcon />
+        </IconAction>
+      );
+      choices = (
+        <Button className="h-10 px-3.5" onClick={() => transfers.confirm(item.id)}>
+          Download {formatSize(item.total ?? 0)}
+        </Button>
+      );
+      break;
     case "queued":
       status = "Waiting for its turn";
       actions = cancel;
@@ -106,6 +134,20 @@ function TransferRow({ item }: { item: Transfer }) {
             ? `On your Mac as ${item.uploaded.name}`
             : "On your Mac";
         actions = dismiss;
+        if (zip && item.uploaded) {
+          const { path } = item.uploaded;
+          choices = (
+            <Button
+              className="h-10 px-3.5"
+              onClick={() => {
+                transfers.dismiss(item.id);
+                void extractHere(path, parentOf(path) ?? "/");
+              }}
+            >
+              Extract here
+            </Button>
+          );
+        }
       } else if (item.delivered) {
         status = "Saved";
         actions = dismiss;

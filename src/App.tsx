@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { BoxMark } from "@/components/box-mark";
 import { api, setUnauthorizedHandler } from "@/lib/api";
 import { relay } from "@/lib/connection";
+import { clearOperations } from "@/lib/files/operations";
 import { clearFiles } from "@/lib/files/store";
 import { clearGit } from "@/lib/git/store";
 import { notifications } from "@/lib/notifications";
@@ -20,6 +21,7 @@ export function App() {
     relay.stop();
     workspaceStore.clear();
     clearFiles();
+    clearOperations();
     clearGit();
     clearTransfers();
     navigate(routes.workspace, { replace: true });
