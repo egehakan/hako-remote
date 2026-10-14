@@ -1134,13 +1134,21 @@ export function createGitMethods(
       if (kind !== "local" && kind !== "remote") {
         throw new GitFailure("bad_request", "kind must be local or remote");
       }
-      if (typeof branch !== "string" || branch === "" || branch.startsWith("-")) {
+      if (typeof branch !== "string" || branch === "" || branch.includes("\0")) {
         throw new GitFailure("bad_request", "branch must be the name of a branch");
       }
       const ref = `${kind === "local" ? "refs/heads" : "refs/remotes"}/${branch}`;
       if ((await run(repo, ["show-ref", "--verify", "-q", ref])).code !== 0) {
         throw new GitFailure("not_found", `No ${kind} branch ${branch} in this repository`);
       }
+      // Git names what it merges as it was given, so the short name gives the usual message
+      // ("Merge branch 'x'"). It is given only when nothing else answers to it.
+      const ambiguous =
+        (await run(repo, ["show-ref", "--verify", "-q", `refs/${branch}`])).code === 0 ||
+        (await run(repo, ["show-ref", "--verify", "-q", `refs/tags/${branch}`])).code === 0 ||
+        (kind === "remote" &&
+          (await run(repo, ["show-ref", "--verify", "-q", `refs/heads/${branch}`])).code === 0);
+      const named = ambiguous ? ref : branch;
       const current = await currentBranch(repo);
       if (current === null) {
         throw new GitFailure(
@@ -1156,7 +1164,7 @@ export function createGitMethods(
         const mergeHead = join(await gitDirOf(repo), "MERGE_HEAD");
         // Git refuses to start over an unfinished merge; its conflicts are not this merge's.
         const wasMerging = existsSync(mergeHead);
-        const result = await run(repo, ["merge", "--no-edit", ref]);
+        const result = await run(repo, ["merge", "--no-edit", "--end-of-options", named]);
         const output = tail(result.output);
         const head = (await hashOf(repo, "HEAD")) ?? "";
         const conflicts = !wasMerging && existsSync(mergeHead) ? await unmergedPaths(repo) : [];

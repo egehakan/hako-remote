@@ -72,8 +72,8 @@ class Screen:
             out.append(f"  {arrow} {ESC}[36m{name}{ESC}[0m agent  {doing}\r\n")
             if index in self.opened:
                 out.append(f"      {ESC}[2m⎿  {done}{ESC}[0m\r\n")
-        out.append("\r\n")
-        for entry in self.log[-max(1, rows - 16):]:
+        out.append("\r\n  A path, which a tap opens: ~/Documents/GitHub/hako/README.md:3\r\n\r\n")
+        for entry in self.log[-max(1, rows - 18):]:
             out.append(entry + "\r\n")
         write("".join(out))
 

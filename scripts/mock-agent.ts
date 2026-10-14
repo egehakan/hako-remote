@@ -758,7 +758,8 @@ const renameMethods: Record<string, Method> = RENAME_ENABLED
         if (params.tab_id === "?" || typeof params.tab_id !== "string") {
           throw new RpcFailure("bad_request", "tab_id must be the id of a tab");
         }
-        const title = newName(params.title, "title", TAB_TITLE_MAX);
+        // A missing title is taken as null: the automatic title again.
+        const title = newName(params.title ?? null, "title", TAB_TITLE_MAX);
         const found = findTab(params.tab_id);
         found.tab.title = title ?? automaticTitles.get(found.tab.id) ?? "zsh";
         workspaceChanged();
@@ -768,7 +769,7 @@ const renameMethods: Record<string, Method> = RENAME_ENABLED
         if (typeof params.folder_id !== "string") {
           throw new RpcFailure("bad_request", "folder_id must be the id of a folder");
         }
-        const name = newName(params.name, "name", FOLDER_NAME_MAX);
+        const name = newName(params.name ?? null, "name", FOLDER_NAME_MAX);
         const { folder } = findFolder(params.folder_id);
         folder.name = name ?? defaultFolderName(folder.directory);
         workspaceChanged();

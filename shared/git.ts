@@ -42,15 +42,32 @@ export function hasConflictMarker(text: string): boolean {
   return /^(?:<{7} |={7}\r?$|>{7} )/m.test(text);
 }
 
-/** The words of the refusal to commit while files still hold conflict markers. */
+const MARKER_HEAD = "Conflict markers remain in:";
+
+/**
+ * The words of the refusal to commit while files still hold conflict markers: a first line, then
+ * one path per line, then "and N more" past the first 20.
+ */
 export function conflictMarkerMessage(paths: readonly string[]): string {
   const shown = paths.slice(0, GIT_MARKER_PATHS_SHOWN);
   const more = paths.length - shown.length;
-  const head =
-    paths.length === 1
-      ? "This file still has conflict markers. Resolve it, then commit the merge:"
-      : "These files still have conflict markers. Resolve them, then commit the merge:";
-  return [head, ...shown, ...(more > 0 ? [`and ${more} more`] : [])].join("\n");
+  return [MARKER_HEAD, ...shown, ...(more > 0 ? [`and ${more} more`] : [])].join("\n");
+}
+
+/** The paths that refusal names, and how many more it left out; null for any other message. */
+export function parseConflictMarkerMessage(
+  message: string,
+): { paths: string[]; more: number } | null {
+  const lines = message.split("\n");
+  if (lines[0]?.trim() !== MARKER_HEAD) return null;
+  const paths: string[] = [];
+  let more = 0;
+  for (const line of lines.slice(1)) {
+    const extra = /^and (\d+) more$/.exec(line.trim());
+    if (extra) more = Number(extra[1]);
+    else if (line !== "") paths.push(line);
+  }
+  return { paths, more };
 }
 
 /**
