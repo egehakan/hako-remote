@@ -151,7 +151,11 @@ export function PreviewViewer({ id }: { id: string }) {
   if (previews === null || !online) {
     return (
       <ViewerShell title={id}>
-        <div className="flex h-full items-center justify-center" aria-busy="true">
+        <div
+          className="flex h-full items-center justify-center"
+          aria-busy="true"
+          aria-label="Loading…"
+        >
           <Spinner />
         </div>
       </ViewerShell>
@@ -477,6 +481,7 @@ function RunningViewer({ preview }: { preview: Preview }) {
             <span className="sr-only">Address in {preview.name}</span>
             <input
               type="text"
+              name="address"
               inputMode="url"
               enterKeyHint="go"
               autoComplete="off"

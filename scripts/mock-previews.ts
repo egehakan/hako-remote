@@ -506,6 +506,8 @@ export async function createPreviewMock(host: PreviewHost, scratch: string) {
       for (const stream of [...streams.values()]) forget(stream);
     },
     list: () => [...previews.values()].map((running) => running.preview),
+    /** Streams still open, for checking that every way of ending one releases it. */
+    streamCount: () => streams.size,
     async dispose(): Promise<void> {
       for (const stream of [...streams.values()]) forget(stream);
       await Promise.all([...previews.values()].map((running) => stop(running)));

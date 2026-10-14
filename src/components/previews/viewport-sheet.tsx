@@ -182,6 +182,7 @@ function Dimension({
       {label}
       <input
         type="number"
+        name={label.toLowerCase()}
         inputMode="numeric"
         min={CUSTOM_MIN}
         max={CUSTOM_MAX}

@@ -418,7 +418,9 @@ export class StreamHub {
     for (const entry of [...this.entries.values()]) {
       if (entry.websocket || now - entry.lastActivity < this.idleMs) continue;
       this.sendText({ t: "sclose", sid: entry.sid, error: { code: "failed", message: "Idle" } });
-      this.fail(entry, new Error("The connection was idle too long"));
+      // Closed, not failed: an idle kept-alive connection is not an error for whoever holds it.
+      this.forget(entry);
+      entry.stream.destroy();
     }
   }
 

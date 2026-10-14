@@ -178,7 +178,7 @@ export function PreviewList({ selected }: { selected: string | null }) {
               </Button>
             </Empty>
           ) : (
-            <div className="flex flex-col gap-px pt-3" aria-busy="true" aria-label="Loading">
+            <div className="flex flex-col gap-px pt-3" aria-busy="true" aria-label="Loading…">
               <Skeleton className="mx-4 h-24 rounded-lg" />
               <Skeleton className="mx-4 mt-2 h-24 rounded-lg" />
             </div>
