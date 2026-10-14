@@ -50,7 +50,13 @@ export function ViewportSheet({
   const [height, setHeight] = useState(String(choice.custom.height));
 
   const pick = (viewport: string) => {
-    onChoose({ ...choice, viewport, zoom: null });
+    // Fit is this screen as it is held; Rotate turns it from there.
+    onChoose({
+      ...choice,
+      viewport,
+      zoom: null,
+      rotated: viewport === "fit" ? false : choice.rotated,
+    });
     onOpenChange(false);
   };
 

@@ -17,6 +17,7 @@ import {
   toStage,
   zoomAround,
 } from "../src/lib/browser/mapping.ts";
+import { DEFAULT_CHOICE, fitSize, viewportSize } from "../src/lib/previews/viewports.ts";
 import { diffInput } from "../src/lib/terminal/input-diff.ts";
 
 const near = (actual: { x: number; y: number } | null, x: number, y: number) => {
@@ -320,4 +321,17 @@ test("downloads: one the Mac says nothing more about is given up on, and revived
   assert.equal(items[0].phase, "done");
   items = markStalled(items, 2000 + DOWNLOAD_STALL_MS);
   assert.equal(nextStallAt(items), null);
+});
+
+// Rotating Fit
+
+test("viewport: Fit rotated is this screen turned a quarter, and rotating again is Fit", () => {
+  const stage = { width: 390.4, height: 750 };
+  assert.deepEqual(fitSize(DEFAULT_CHOICE, stage), { width: 390, height: 750 });
+  const rotated = { ...DEFAULT_CHOICE, rotated: true };
+  assert.deepEqual(fitSize(rotated, stage), { width: 750, height: 390 });
+  // A phone held sideways turns to portrait.
+  assert.deepEqual(fitSize(rotated, { width: 844, height: 340 }), { width: 340, height: 844 });
+  assert.equal(viewportSize(rotated), null);
+  assert.deepEqual(fitSize({ ...rotated, rotated: false }, stage), fitSize(DEFAULT_CHOICE, stage));
 });

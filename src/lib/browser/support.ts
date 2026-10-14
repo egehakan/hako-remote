@@ -5,7 +5,7 @@ import type { BrowserViewport } from "@shared/browser";
 import { useEffect, useSyncExternalStore } from "react";
 import { relay, RpcFailure } from "@/lib/connection";
 import { useConnection } from "@/lib/hooks";
-import { type ViewChoice, viewportSize } from "@/lib/previews/viewports";
+import { fitSize, type ViewChoice, viewportSize } from "@/lib/previews/viewports";
 import { isTouchDevice } from "@/lib/terminal/prefs";
 
 export type MacBrowserSupport = "unknown" | "yes" | "no";
@@ -134,8 +134,8 @@ const CUSTOM_TOUCH_BELOW = 800;
 
 /**
  * The device the Mac's browser pretends to be for a choice. Fit is this screen: the space there is
- * on it, its own pixel ratio, and touch when it is a touch device. No user agent is given: the
- * Mac's Chrome keeps its own, which Google's sign-in expects.
+ * on it (turned a quarter when rotated), its own pixel ratio, and touch when it is a touch device.
+ * No user agent is given: the Mac's Chrome keeps its own, which Google's sign-in expects.
  */
 export function deviceFor(
   choice: ViewChoice,
@@ -145,8 +145,7 @@ export function deviceFor(
   if (size === null) {
     const touch = isTouchDevice();
     return {
-      width: Math.max(100, Math.round(space.width)),
-      height: Math.max(100, Math.round(space.height)),
+      ...fitSize(choice, space),
       scale: Math.min(3, Math.max(1, Math.round((window.devicePixelRatio || 1) * 100) / 100)),
       mobile: touch,
       touch,

@@ -249,7 +249,8 @@ phone, and everything works:
   from the phone (they go to the uploads area on the Mac first), and a download appears at the
   bottom with "Save to phone" once it has finished on the Mac, or says that it was cancelled or
   failed there.
-- **Viewport.** The same sizes as below; Fit uses this screen's size and pixel ratio.
+- **Viewport.** The same sizes as below; Fit uses this screen's size and pixel ratio, and Rotate
+  turns it to this screen's landscape size (or portrait, held sideways), scaled down to fit.
 - **Open URL…** at the top of Previews opens any address in the Mac browser, without a preview.
 
 The choice of browser is in the viewport menu and is remembered for each preview. The other one,

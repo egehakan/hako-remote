@@ -55,6 +55,19 @@ export function viewportSize(choice: ViewChoice): { width: number; height: numbe
   return choice.rotated ? { width: size.height, height: size.width } : size;
 }
 
+/**
+ * The CSS size Fit gives a page in `space`: all of it, or, rotated, the same screen turned a
+ * quarter (its height by its width), which is then scaled down to fit.
+ */
+export function fitSize(
+  choice: ViewChoice,
+  space: { width: number; height: number },
+): { width: number; height: number } {
+  const width = Math.max(100, Math.round(space.width));
+  const height = Math.max(100, Math.round(space.height));
+  return choice.rotated ? { width: height, height: width } : { width, height };
+}
+
 /** The scale at which a page of `size` fits into `space`, never above 1. */
 export function fitScale(
   size: { width: number; height: number },

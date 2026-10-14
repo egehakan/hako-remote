@@ -196,7 +196,9 @@ export function MacViewer({ target, name, choiceKey, mode, status, runKey }: Mac
 
   // The device the Mac's browser pretends to be. Fit follows this screen, but not while the
   // keyboard covers part of it, as a phone's browser keeps its page size when the keyboard opens.
-  const fixed = viewportSize(choice) !== null;
+  const followsScreen = viewportSize(choice) === null;
+  // A page not filling the stage exactly (a fixed size, or Fit rotated) is framed and scaled down.
+  const fixed = !followsScreen || choice.rotated;
   const padding = fixed ? STAGE_PADDING : 0;
   const usable = {
     width: Math.max(0, space.width - padding * 2),
@@ -204,8 +206,8 @@ export function MacViewer({ target, name, choiceKey, mode, status, runKey }: Mac
   };
   const frozen = useRef<ReturnType<typeof deviceFor> | null>(null);
   const measured = usable.width >= 100 && usable.height >= 100;
-  let device = deviceFor(choice, usable);
-  if (!fixed && keyboardOpen && frozen.current) device = frozen.current;
+  let device = deviceFor(choice, space);
+  if (followsScreen && keyboardOpen && frozen.current) device = frozen.current;
   else if (measured) frozen.current = device;
 
   // One session for the life of the viewer, opened once the stage has a size.
@@ -258,6 +260,12 @@ export function MacViewer({ target, name, choiceKey, mode, status, runKey }: Mac
     scale: inner.scale,
   };
   const zoomed = scale > fit + 0.005;
+  const sizeLabel =
+    followsScreen && choice.rotated
+      ? device.width > device.height
+        ? "Fit, landscape"
+        : "Fit, portrait"
+      : viewportLabel(choice);
   const levels = zoomLevels(fit);
 
   const zoomTo = (next: number | null, focus?: Point) => {
@@ -950,13 +958,11 @@ export function MacViewer({ target, name, choiceKey, mode, status, runKey }: Mac
             type="button"
             onClick={() => setViewportOpen(true)}
             className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-lg px-2 text-left outline-none hover:bg-muted/50 focus-visible:ring-3 focus-visible:ring-ring/50"
-            aria-label={`Viewport: ${viewportLabel(choice)}, Mac browser. Change`}
+            aria-label={`Viewport: ${sizeLabel}, Mac browser. Change`}
           >
             <LaptopIcon className="size-4 shrink-0 text-muted-foreground" />
             <span className="flex min-w-0 flex-col">
-              <span className="truncate text-[0.8125rem] leading-4 font-medium">
-                {viewportLabel(choice)}
-              </span>
+              <span className="truncate text-[0.8125rem] leading-4 font-medium">{sizeLabel}</span>
               <span className="truncate font-mono text-[0.6875rem] leading-4 text-faint tabular-nums">
                 {`${page.width}×${page.height} ${Math.round(scale * 100)}%`}
               </span>
@@ -967,7 +973,7 @@ export function MacViewer({ target, name, choiceKey, mode, status, runKey }: Mac
             size="icon"
             className="size-10"
             aria-label="Rotate"
-            disabled={!fixed}
+            aria-pressed={choice.rotated}
             onClick={() => setChoice({ ...choice, rotated: !choice.rotated, zoom: null })}
           >
             <RotateCcwIcon />
