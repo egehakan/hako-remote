@@ -7,6 +7,7 @@ import {
   osc8Uri,
   pathsAt,
   resolvePath,
+  wrappedPathsAt,
 } from "../src/lib/terminal/links.ts";
 
 const only = (text: string) =>
@@ -114,4 +115,102 @@ test("a tap maps to the cell under it at any scale", () => {
     col: 50,
     row: 20,
   });
+});
+
+/**
+ * What a tap on `needle` in `rows` opens, given the paths the Mac has: the readings resolved in
+ * `/w` with home `/Users/ege`, at most six asked about, the first that is there opened.
+ */
+function tapOpens(rows: string[], needle: string, existing: string[], row?: number) {
+  const at = row ?? rows.findIndex((text) => text.includes(needle));
+  const asked: { path: string; line: number | null; text: string }[] = [];
+  for (const found of wrappedPathsAt(rows, at, rows[at].indexOf(needle))) {
+    const path = resolvePath(found.path, "/w", "/Users/ege");
+    if (path === null || asked.some((other) => other.path === path)) continue;
+    const text = found.spans.map((span) => rows[span.row].slice(span.start, span.end)).join("");
+    asked.push({ path, line: found.line, text });
+  }
+  assert.ok(asked.length <= 6, `asked about ${asked.length} paths`);
+  return asked.find((target) => existing.includes(target.path)) ?? null;
+}
+
+const LINKS = "/Users/ege/Documents/GitHub/hako-remote/src/lib/terminal/links.ts";
+
+test("a path a program broke onto the next row opens from either part", () => {
+  const rows = [
+    "Wrote /Users/ege/Documents/GitHub/hako-remote/src/lib/ter",
+    "minal/links.ts",
+    "Done.",
+  ];
+  for (const needle of ["Users", "ter", "minal", "links.ts"]) {
+    assert.equal(tapOpens(rows, needle, [LINKS])?.path, LINKS, needle);
+  }
+  assert.equal(
+    tapOpens(rows, "ter", [LINKS])?.text,
+    "/Users/ege/Documents/GitHub/hako-remote/src/lib/terminal/links.ts",
+  );
+});
+
+test("a path broken twice and indented, as Claude Code does, opens from every row", () => {
+  const rows = [
+    "⏺ I changed /Users/ege/Documents/",
+    "  GitHub/hako-remote/src/lib/",
+    "  terminal/links.ts and its tests.",
+  ];
+  for (const needle of ["Documents", "GitHub", "lib/", "terminal"]) {
+    assert.equal(tapOpens(rows, needle, [LINKS])?.path, LINKS, needle);
+  }
+  // Relative to the terminal's directory, broken inside the file's name.
+  const relative = ["  ⎿  Updated src/lib/terminal/li", "     nks.ts with 3 additions"];
+  assert.equal(
+    tapOpens(relative, "nks", ["/w/src/lib/terminal/links.ts"])?.path,
+    "/w/src/lib/terminal/links.ts",
+  );
+  assert.equal(
+    tapOpens(relative, "src", ["/w/src/lib/terminal/links.ts"])?.path,
+    "/w/src/lib/terminal/links.ts",
+  );
+});
+
+test("a broken path inside a box, and a line number after it, open at that line", () => {
+  const rows = [
+    "╭──────────────────────────────────────╮",
+    "│ Read ~/Documents/GitHub/hako-remote/ │",
+    "│   src/lib/terminal/links.ts:12       │",
+    "╰──────────────────────────────────────╯",
+  ];
+  for (const needle of ["Documents", "links"]) {
+    const hit = tapOpens(rows, needle, [LINKS]);
+    assert.equal(hit?.path, LINKS, needle);
+    assert.equal(hit?.line, 12, needle);
+  }
+  const split = ["error at ~/Documents/GitHub/hako-remote/src/lib/terminal/links.ts", "  :12:4"];
+  assert.equal(tapOpens(split, "links", [LINKS])?.line, 12);
+  // Four rows after the tapped one at most, and still no more than six questions.
+  const tall = [
+    "/Users/",
+    "ege/",
+    "Documents/",
+    "GitHub/",
+    "hako-remote/src/lib/terminal/",
+    "links.ts",
+  ];
+  assert.equal(tapOpens(tall, "GitHub", [LINKS])?.path, LINKS);
+});
+
+test("paths on rows one after the other stay apart, and words do not become paths", () => {
+  const rows = [
+    "/Users/ege/a.ts",
+    "/Users/ege/b.ts",
+    "  modified:   src/c.ts",
+    "  modified:   src/d.ts",
+  ];
+  const existing = ["/Users/ege/a.ts", "/Users/ege/b.ts", "/w/src/c.ts", "/w/src/d.ts"];
+  assert.equal(tapOpens(rows, "a.ts", existing)?.path, "/Users/ege/a.ts");
+  assert.equal(tapOpens(rows, "b.ts", existing)?.path, "/Users/ege/b.ts");
+  assert.equal(tapOpens(rows, "c.ts", existing)?.path, "/w/src/c.ts");
+  assert.equal(tapOpens(rows, "d.ts", existing)?.path, "/w/src/d.ts");
+  const prose = ["The quick brown", "fox jumps over the", "src/a.ts file"];
+  assert.deepEqual(wrappedPathsAt(prose, 0, prose[0].indexOf("brown")), []);
+  assert.equal(tapOpens(prose, "the", ["/w/src/a.ts"], 1), null);
 });

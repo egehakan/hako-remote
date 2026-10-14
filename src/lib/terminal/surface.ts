@@ -64,7 +64,13 @@ type DrawnLink = {
 export type BufferCell = { line: number; col: number };
 
 /** A line as it reads, with wrapped rows joined, and the cell each of its characters is drawn in. */
-export type LogicalLine = { text: string; cells: BufferCell[] };
+export type LogicalLine = {
+  text: string;
+  cells: BufferCell[];
+  /** The buffer lines it is drawn on, from first to last. */
+  first: number;
+  last: number;
+};
 
 /**
  * Keeps this terminal from answering the program's questions (device attributes, cursor position,
@@ -412,9 +418,11 @@ export class TerminalSurface implements TerminalSink {
     while (first > 0 && buffer.getLine(first)?.isWrapped) first -= 1;
     let text = "";
     const cells: BufferCell[] = [];
+    let last = first;
     for (let line = first; line === first || buffer.getLine(line)?.isWrapped; line += 1) {
       const row = buffer.getLine(line);
       if (!row) break;
+      last = line;
       for (let col = 0; col < row.length; col += 1) {
         const cell = row.getCell(col);
         // The second half of a wide character has no text of its own.
@@ -424,7 +432,12 @@ export class TerminalSurface implements TerminalSink {
         for (let index = 0; index < chars.length; index += 1) cells.push({ line, col });
       }
     }
-    return { text, cells };
+    return { text, cells, first, last };
+  }
+
+  /** How many lines the buffer on show holds, history included. */
+  get lineCount(): number {
+    return this.terminal.buffer.active.length;
   }
 
   /** The line of the buffer the cursor is on. */

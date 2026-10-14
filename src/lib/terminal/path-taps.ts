@@ -5,8 +5,8 @@ import type { FsRootsResult, FsStatResult } from "@shared/protocol";
 import { relay, RpcFailure } from "@/lib/connection";
 import { homeDirectory, setHomeDirectory } from "@/lib/paths";
 import { navigate, routes } from "@/lib/route";
-import { fileUrlPath, pathsAt, resolvePath } from "./links";
-import type { BufferCell, TerminalSurface } from "./surface";
+import { fileUrlPath, resolvePath, WRAP_ROWS, wrappedPathsAt } from "./links";
+import type { BufferCell, LogicalLine, TerminalSurface } from "./surface";
 
 export type PathKind = "dir" | "file";
 
@@ -19,7 +19,7 @@ export type PathTarget = {
 };
 
 /** At most this many paths are asked about for one tap. */
-const MAX_CHECKS = 3;
+const MAX_CHECKS = 6;
 const FOUND_FOR_MS = 60_000;
 const MISSING_FOR_MS = 15_000;
 
@@ -129,8 +129,9 @@ function check(path: string): Promise<PathKind | null> {
 
 /**
  * The paths a tap on `cell` may mean, the likeliest first: an OSC 8 link to a file, then what the
- * text there reads as. With `skipCursorLine` the line the cursor is on, where a command is being
- * typed, is left to the keyboard.
+ * text there reads as, the longest reading first, joined across rows where a program broke a long
+ * path. With `skipCursorLine` the line the cursor is on, where a command is being typed, is left to
+ * the keyboard.
  */
 export function targetsAt(
   surface: TerminalSurface,
@@ -144,19 +145,41 @@ export function targetsAt(
   const linked = uri === null ? null : fileUrlPath(uri);
   if (linked !== null) targets.push({ path: linked, line: null, column: null, cells: [cell] });
 
-  const { text, cells } = surface.logicalLine(cell.line);
-  if (skipCursorLine && cells.some((drawn) => drawn.line === surface.cursorLine)) return targets;
-  const index = cells.findIndex((drawn) => drawn.line === cell.line && drawn.col === cell.col);
+  const typing = (line: LogicalLine) =>
+    skipCursorLine && line.cells.some((drawn) => drawn.line === surface.cursorLine);
+  const tapped = surface.logicalLine(cell.line);
+  if (typing(tapped)) return targets;
+  const index = tapped.cells.findIndex(
+    (drawn) => drawn.line === cell.line && drawn.col === cell.col,
+  );
   if (index === -1) return targets;
+
+  const lines = [tapped];
+  // A link already says where all of it is, however it was broken.
+  if (linked === null) {
+    while (lines.length <= WRAP_ROWS && lines[0].first > 0) {
+      const previous = surface.logicalLine(lines[0].first - 1);
+      if (typing(previous)) break;
+      lines.unshift(previous);
+    }
+    const after = lines.length + WRAP_ROWS;
+    while (lines.length < after && lines[lines.length - 1].last + 1 < surface.lineCount) {
+      const next = surface.logicalLine(lines[lines.length - 1].last + 1);
+      if (typing(next)) break;
+      lines.push(next);
+    }
+  }
+  const at = lines.indexOf(tapped);
   const home = homeDirectory();
-  for (const found of pathsAt(text, index)) {
+  const rows = lines.map((line) => line.text);
+  for (const found of wrappedPathsAt(rows, at, index)) {
     const path = resolvePath(found.path, cwd, home);
     if (path === null || targets.some((target) => target.path === path)) continue;
     targets.push({
       path,
       line: found.line,
       column: found.column,
-      cells: cells.slice(found.start, found.end),
+      cells: found.spans.flatMap((span) => lines[span.row].cells.slice(span.start, span.end)),
     });
   }
   return targets.slice(0, MAX_CHECKS);
@@ -184,12 +207,16 @@ export function knownTarget(
   return unknown ? "unknown" : null;
 }
 
-/** Asks the Mac about each target in turn and gives the first that is there. */
+/** Asks the Mac about all the targets at once and gives the first in order that is there. */
 export async function findTarget(
   targets: readonly PathTarget[],
 ): Promise<{ target: PathTarget; kind: PathKind } | null> {
-  for (const target of targets) {
-    const kind = remembered(target.path) ?? (await check(target.path));
+  const kinds = targets.map((target) => {
+    const kind = remembered(target.path);
+    return kind === undefined ? check(target.path) : Promise.resolve(kind);
+  });
+  for (const [order, target] of targets.entries()) {
+    const kind = await kinds[order];
     if (kind !== null) return { target, kind };
   }
   return null;

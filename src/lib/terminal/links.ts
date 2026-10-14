@@ -12,8 +12,11 @@ export type PathCandidate = {
   column: number | null;
 };
 
-/** What a path can be made of when nothing quotes it: no spaces, brackets, quotes or pipes. */
-const UNQUOTED = /[^\s"'`()<>[\]{}|;,]+/gu;
+/**
+ * What a path can be made of when nothing quotes it: no spaces, brackets, quotes, pipes or the
+ * lines of a box drawn around text.
+ */
+const UNQUOTED = /[^\s"'`()<>[\]{}|;,\u2500-\u257f]+/gu;
 const QUOTED = /"([^"\n]+)"|'([^'\n]+)'|`([^`\n]+)`/g;
 /** A line and an optional column after a path, as compilers and editors write them. */
 const POSITION = /:(\d+)(?::(\d+))?$/;
@@ -92,6 +95,123 @@ export function findPaths(text: string): PathCandidate[] {
 /** The paths that cover the character at `index`, the one to try first first. */
 export function pathsAt(text: string, index: number): PathCandidate[] {
   return findPaths(text).filter((found) => index >= found.start && index < found.end);
+}
+
+/** A stretch of one of the rows a path is read from, the end not included. */
+export type Span = { row: number; start: number; end: number };
+
+/** A reading of a tap, perhaps across rows that a program broke a long path onto. */
+export type WrappedCandidate = {
+  path: string;
+  line: number | null;
+  column: number | null;
+  /** Where its text is, in reading order. */
+  spans: Span[];
+};
+
+/** How many rows before and after the tapped one a path may have been broken onto. */
+export const WRAP_ROWS = 4;
+/** At most this many readings across rows are offered for one tap. */
+const MAX_JOINED = 5;
+/** What may stand between text and the edge of its row: spaces and the lines of a box. */
+const MARGIN = /^[\s\u2500-\u257f]*$/u;
+const LEADING_MARGIN = /^[\s\u2500-\u257f]*/u;
+
+function tokens(text: string): { start: number; end: number }[] {
+  return [...text.matchAll(UNQUOTED)].map((match) => {
+    const start = match.index ?? 0;
+    return { start, end: start + match[0].length };
+  });
+}
+
+/** The first word of a row when nothing but indentation or a box's edge comes before it. */
+function firstToken(text: string): { start: number; end: number } | null {
+  const lead = LEADING_MARGIN.exec(text)?.[0].length ?? 0;
+  return tokens(text).find((token) => token.start === lead) ?? null;
+}
+
+/** The last word of a row when nothing but spaces or a box's edge comes after it. */
+function lastToken(text: string): { start: number; end: number } | null {
+  const last = tokens(text).at(-1);
+  return last && MARGIN.test(text.slice(last.end)) ? last : null;
+}
+
+/**
+ * The paths a tap at `index` of `rows[at]` may mean, the longest first. Each row is a line as the
+ * terminal wrapped it; a program that breaks long lines itself (Claude Code, git, a Markdown
+ * renderer) leaves a path that reaches the end of a row going on at the start of the next, after
+ * its indentation or the side of a box, so those words are joined too, up to `WRAP_ROWS` each way.
+ * Whether a joined reading is a path is for the Mac to say.
+ */
+export function wrappedPathsAt(
+  rows: readonly string[],
+  at: number,
+  index: number,
+): WrappedCandidate[] {
+  const text = rows[at] ?? "";
+  const plain = pathsAt(text, index).map(({ path, line, column, start, end }) => ({
+    path,
+    line,
+    column,
+    spans: [{ row: at, start, end }],
+  }));
+  const tapped = tokens(text).find((token) => index >= token.start && index < token.end);
+  if (!tapped) return plain;
+
+  const pieces: Span[] = [{ row: at, ...tapped }];
+  for (let row = at; row + 1 < rows.length && row - at < WRAP_ROWS; row += 1) {
+    const last = pieces[pieces.length - 1];
+    if (!MARGIN.test(rows[row].slice(last.end))) break;
+    const next = firstToken(rows[row + 1]);
+    if (!next) break;
+    pieces.push({ row: row + 1, ...next });
+  }
+  let before = 0;
+  for (let row = at; row > 0 && before < WRAP_ROWS; row -= 1) {
+    if (!MARGIN.test(rows[row].slice(0, pieces[0].start))) break;
+    const previous = lastToken(rows[row - 1]);
+    if (!previous) break;
+    pieces.unshift({ row: row - 1, ...previous });
+    before += 1;
+  }
+
+  const joined: WrappedCandidate[] = [];
+  for (let from = 0; from <= before; from += 1) {
+    for (let to = before; to < pieces.length; to += 1) {
+      if (from === to) continue;
+      const chosen = pieces.slice(from, to + 1);
+      const offsets: number[] = [];
+      let words = "";
+      for (const piece of chosen) {
+        offsets.push(words.length);
+        words += rows[piece.row].slice(piece.start, piece.end);
+      }
+      for (const found of findPaths(words)) {
+        // Prose broken between two words would otherwise join them into a name.
+        if (!found.path.includes("/")) continue;
+        const spans = chosen.flatMap((piece, order) => {
+          const start = Math.max(found.start, offsets[order]);
+          const end = Math.min(found.end, offsets[order] + piece.end - piece.start);
+          if (start >= end) return [];
+          const shift = piece.start - offsets[order];
+          return [{ row: piece.row, start: start + shift, end: end + shift }];
+        });
+        // Every row chosen takes part, the tapped one included; fewer is another reading.
+        if (spans.length !== chosen.length) continue;
+        joined.push({ path: found.path, line: found.line, column: found.column, spans });
+      }
+    }
+  }
+  const size = (found: WrappedCandidate) =>
+    found.spans.reduce((sum, span) => sum + span.end - span.start, 0);
+  const longest = joined
+    .sort((a, b) => size(b) - size(a))
+    .filter(
+      (found, order, all) =>
+        all.findIndex((other) => other.path === found.path && other.line === found.line) === order,
+    )
+    .slice(0, MAX_JOINED);
+  return [...longest, ...plain];
 }
 
 /** Removes `.` and `..` segments and doubled slashes. Null when `..` climbs above `/`. */

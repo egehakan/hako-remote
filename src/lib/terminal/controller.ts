@@ -254,7 +254,8 @@ export class TerminalController {
   /** Asks the Mac, then opens what is there, or clicks `orClick` when nothing is. */
   private async checkThenOpen(targets: PathTarget[], orClick: BufferCell | null): Promise<void> {
     const count = this.tapCount;
-    this.set({ checking: targets[0].cells });
+    // The shortest reading is the one sure to be under the finger; longer ones are guesses.
+    this.set({ checking: targets[targets.length - 1].cells });
     const found = await findTarget(targets);
     if (count !== this.tapCount) return;
     this.set({ checking: null });

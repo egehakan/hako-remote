@@ -78,10 +78,11 @@ of the Hako on your Mac. `#/t/<session id>` is its address, so a link can open o
   viewer, scrolled to the line when a `:line` or `:line:column` follows it. That holds for absolute
   paths, `~/` paths, paths relative to the terminal's directory, quoted ones with spaces in them,
   links a program printed as OSC 8 hyperlinks, and the paths in Claude Code's tool lines
-  (`Read(src/app.ts)`, `src/app.ts:12:5`). The Mac is asked first whether something is there, and
-  the path is underlined while it answers; a path that is not there does nothing, and the next tap
-  on it raises the keyboard. The line being typed on is left to the keyboard. With a mouse, paths
-  underline under the pointer and open with a click.
+  (`Read(src/app.ts)`, `src/app.ts:12:5`). A long path that a program broke onto several rows
+  itself, indented or inside a box, opens from a tap on any of its rows. The Mac is asked first
+  whether something is there, and the path is underlined while it answers; a path that is not there
+  does nothing, and the next tap on it raises the keyboard. The line being typed on is left to the
+  keyboard. With a mouse, paths underline under the pointer and open with a click.
 - **Programs that take the mouse.** While a program reads the mouse, as Claude Code's full-screen
   mode does, a tap is a click at that spot (so a tap opens a subagent to see what it is doing), and
   it does not raise the keyboard; the keyboard key on the key bar does. A tap on a path still opens
