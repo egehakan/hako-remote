@@ -84,9 +84,17 @@ async function freePort(): Promise<number> {
   });
 }
 
-function answers(port: number): Promise<boolean> {
+/**
+ * Whether anything listens on a port, over IPv4 or IPv6: Vite, for one, listens on `localhost`,
+ * which on a Mac can be `::1` alone.
+ */
+async function answers(port: number): Promise<boolean> {
+  return (await answersOn(port, "127.0.0.1")) || answersOn(port, "::1");
+}
+
+function answersOn(port: number, host: string): Promise<boolean> {
   return new Promise((resolve) => {
-    const socket = net.connect(port, "127.0.0.1");
+    const socket = net.connect(port, host);
     socket.setTimeout(1000);
     socket.once("connect", () => {
       socket.destroy();
@@ -135,6 +143,8 @@ type Stream = {
   receivedClose: boolean;
   /** The dev server closed its side; `sclose` goes once the queue is empty. */
   ended: boolean;
+  /** The TCP connection is gone altogether; the relay hears so once the queue is empty. */
+  closed: boolean;
 };
 
 export async function createPreviewMock(host: PreviewHost, scratch: string) {
@@ -355,10 +365,15 @@ export async function createPreviewMock(host: PreviewHost, scratch: string) {
     }
     if (stream.queued.length === 0) {
       stream.socket?.resume();
-      if (stream.ended && !stream.sentClose) {
+      if ((stream.ended || stream.closed) && !stream.sentClose) {
         stream.sentClose = true;
         host.sendText({ t: "sclose", sid: stream.sid });
         if (stream.receivedClose) forget(stream);
+      }
+      // Nothing the relay still sends can reach the dev server any more: say so, or it waits.
+      if (stream.closed && streams.get(stream.sid) === stream) {
+        if (stream.receivedClose) forget(stream);
+        else fail(stream, "failed", "The dev server closed the connection");
       }
     } else {
       stream.socket?.pause();
@@ -394,9 +409,9 @@ export async function createPreviewMock(host: PreviewHost, scratch: string) {
         send(stream);
       });
       socket.on("close", () => {
-        if (streams.get(stream.sid) === stream && !(stream.sentClose || stream.ended)) {
-          fail(stream, "failed", "The connection closed");
-        }
+        if (streams.get(stream.sid) !== stream) return;
+        stream.closed = true;
+        send(stream);
       });
     });
     socket.once("error", (error: NodeJS.ErrnoException) => {
@@ -437,6 +452,7 @@ export async function createPreviewMock(host: PreviewHost, scratch: string) {
         sentClose: false,
         receivedClose: false,
         ended: false,
+        closed: false,
       };
       streams.set(sid, stream);
       connect(stream, port, ["127.0.0.1", "::1"]);

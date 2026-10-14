@@ -81,7 +81,10 @@ export class TunnelStream extends Duplex {
   private readonly hub: StreamHub;
 
   constructor(hub: StreamHub, sid: number, previewId: string) {
-    super({ allowHalfOpen: true, readableHighWaterMark: 64 * 1024 });
+    // As a TCP socket does by default: once the Mac's side has ended, this side ends too, so an
+    // HTTP client sees a kept-alive connection the dev server closed as closed, not as a socket
+    // to send the next request on.
+    super({ allowHalfOpen: false, readableHighWaterMark: 64 * 1024 });
     this.hub = hub;
     this.sid = sid;
     this.previewId = previewId;
