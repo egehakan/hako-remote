@@ -18,20 +18,17 @@ import {
 } from "lucide-react";
 import {
   type ComponentType,
+  lazy,
   type ReactNode,
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import { EntryMenu, type MenuTarget } from "@/components/files/entry-menu";
-import {
-  type NameTask,
-  NameDialog,
-  PasteConflictDialog,
-  TrashDialog,
-} from "@/components/files/operation-dialogs";
+import type { MenuTarget } from "@/components/files/entry-menu";
+import type { NameTask } from "@/components/files/operation-dialogs";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -69,6 +66,26 @@ import { navigate, routes } from "@/lib/route";
 import { uploadFiles } from "@/lib/transfers/actions";
 import { useTransferSupport } from "@/lib/transfers/store";
 import { cn } from "@/lib/utils";
+
+// Loaded just after the list, so the first screen does not wait for menus nobody has opened yet.
+const EntryMenu = lazy(() =>
+  import("@/components/files/entry-menu").then((module) => ({ default: module.EntryMenu })),
+);
+const NameDialog = lazy(() =>
+  import("@/components/files/operation-dialogs").then((module) => ({
+    default: module.NameDialog,
+  })),
+);
+const TrashDialog = lazy(() =>
+  import("@/components/files/operation-dialogs").then((module) => ({
+    default: module.TrashDialog,
+  })),
+);
+const PasteConflictDialog = lazy(() =>
+  import("@/components/files/operation-dialogs").then((module) => ({
+    default: module.PasteConflictDialog,
+  })),
+);
 
 type FileActionsInput = {
   /** The directory on show. */
@@ -303,7 +320,7 @@ export function useFileActions({ path, entries, visibleNames }: FileActionsInput
   const selectedItems = itemsOf(selected);
 
   const dialogs = (
-    <>
+    <Suspense fallback={null}>
       <EntryMenu target={menu} open={menuOpen} onOpenChange={setMenuOpen} {...handlers} />
       <NameDialog
         task={nameTask}
@@ -393,7 +410,7 @@ export function useFileActions({ path, entries, visibleNames }: FileActionsInput
           event.target.value = "";
         }}
       />
-    </>
+    </Suspense>
   );
 
   return {

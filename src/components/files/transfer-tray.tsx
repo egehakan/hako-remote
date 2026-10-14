@@ -10,9 +10,9 @@ import {
 import { type ReactNode, useEffect } from "react";
 import { OperationRows } from "@/components/files/operations-tray";
 import { Button } from "@/components/ui/button";
-import { isZip } from "@/components/files/entry-menu";
 import { extractHere, useOperations, useOpsSupport } from "@/lib/files/operations";
 import { parentOf } from "@/lib/files/paths";
+import { isZip } from "@/lib/files/preview";
 import { formatSize } from "@/lib/files/format";
 import { handOver } from "@/lib/transfers/actions";
 import { describeTransferFailure, fraction, progressLabel } from "@/lib/transfers/describe";

@@ -24,6 +24,7 @@ import { NEEDS_NEWER_HAKO } from "@/lib/errors";
 import { formatSize } from "@/lib/files/format";
 import { downloadFolder, extractHere, useOpsSupport } from "@/lib/files/operations";
 import { parentOf } from "@/lib/files/paths";
+import { isZip } from "@/lib/files/preview";
 import { useConnection } from "@/lib/hooks";
 import { tildify } from "@/lib/paths";
 import { saveToDevice } from "@/lib/transfers/actions";
@@ -54,10 +55,6 @@ type EntryMenuProps = EntryMenuHandlers & {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 };
-
-export function isZip(name: string): boolean {
-  return /\.zip$/i.test(name);
-}
 
 /** What can be done with one entry of a folder's list, or with the folder on show. */
 export function EntryMenu({ target, open, onOpenChange, ...handlers }: EntryMenuProps) {

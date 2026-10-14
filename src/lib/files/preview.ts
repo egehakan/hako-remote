@@ -28,3 +28,7 @@ export function isDelimitedText(name: string): boolean {
 export const SHEET_ROW_LIMIT = 2_000;
 /** The most columns of one sheet that are shown. */
 export const SHEET_COLUMN_LIMIT = 200;
+
+export function isZip(name: string): boolean {
+  return /\.zip$/i.test(name);
+}
