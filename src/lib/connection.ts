@@ -1,5 +1,6 @@
 // The client's one WebSocket to the relay: requests, events, terminal output, and staying connected.
 
+import { BROWSER_FRAME_TYPE, type BrowserFrame, decodeBrowserFrame } from "@shared/browser";
 import { decodeOutputFrame, type OutputFrame } from "@shared/frames";
 import {
   type AgentStatus,
@@ -32,6 +33,7 @@ export class RpcFailure extends Error {
 type PendingRequest = { resolve: (value: unknown) => void; reject: (error: RpcFailure) => void };
 type EventHandler = (data: unknown) => void;
 type OutputHandler = (frame: OutputFrame) => void;
+type BrowserFrameHandler = (frame: BrowserFrame) => void;
 
 const RETRY_MIN_MS = 500;
 const RETRY_MAX_MS = 8_000;
@@ -55,6 +57,7 @@ class RelayConnection {
   private readonly listeners = new Set<() => void>();
   private readonly eventHandlers = new Map<string, Set<EventHandler>>();
   private readonly outputHandlers = new Map<string, Set<OutputHandler>>();
+  private readonly browserFrameHandlers = new Set<BrowserFrameHandler>();
 
   /** Called when the relay says the login session is no longer valid. */
   onUnauthorized: () => void = () => {};
@@ -124,6 +127,12 @@ class RelayConnection {
   /** Receives the binary output frames of one terminal session. Subscribing is a separate request. */
   onOutput(sessionId: string, handler: OutputHandler): () => void {
     return addTo(this.outputHandlers, sessionId, handler);
+  }
+
+  /** Receives the pictures of the Mac browser sessions this client opened. */
+  onBrowserFrame(handler: BrowserFrameHandler): () => void {
+    this.browserFrameHandlers.add(handler);
+    return () => this.browserFrameHandlers.delete(handler);
   }
 
   private open(): void {
@@ -243,7 +252,11 @@ class RelayConnection {
       if (frame.ok === true) {
         request.resolve(frame.result);
       } else {
-        const error = (frame.error ?? {}) as { code?: ErrorCode; message?: string; limit?: unknown };
+        const error = (frame.error ?? {}) as {
+          code?: ErrorCode;
+          message?: string;
+          limit?: unknown;
+        };
         request.reject(
           new RpcFailure(
             error.code ?? "failed",
@@ -261,6 +274,11 @@ class RelayConnection {
   }
 
   private handleBinary(bytes: Uint8Array): void {
+    if (bytes[0] === BROWSER_FRAME_TYPE) {
+      const picture = decodeBrowserFrame(bytes);
+      if (picture) for (const handler of this.browserFrameHandlers) handler(picture);
+      return;
+    }
     const frame = decodeOutputFrame(bytes);
     if (!frame) return;
     for (const handler of this.outputHandlers.get(frame.sessionId) ?? []) handler(frame);
