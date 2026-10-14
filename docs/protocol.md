@@ -10,7 +10,8 @@ The relay does not interpret workspace, file or git data. It routes requests to 
 responses back to the client that asked, and fans events out to clients. It forwards any method name
 without knowing it; the only methods it reads are `app.info` and `preview.list` (which it calls
 itself, see [Relay events](#relay-events) and [Previews](#previews-round-4)) and `term.subscribe` /
-`term.unsubscribe` (to route terminal output). It also serves the previews' own origins, which it
+`term.unsubscribe` (to route terminal output), and `browser.open` and `browser.close` (to route a
+Mac browser session's pictures and events to the client that opened it). It also serves the previews' own origins, which it
 tunnels to the Mac over byte streams ([Previews](#previews-round-4)).
 
 ## Connections
@@ -80,8 +81,9 @@ HTTPS (local development) the cookie is set without `Secure`.
 
 ## Frames
 
-Text frames are JSON. Binary frames carry terminal output (type `0x01`, below) and, between the
-relay and the agent only, the data of [byte streams](#byte-streams) (type `0x02`).
+Text frames are JSON. Binary frames carry terminal output (type `0x01`, below), the pictures of
+the [Mac browser](#mac-browser-round-5) (type `0x03`) and, between the relay and the agent only,
+the data of [byte streams](#byte-streams) (type `0x02`).
 
 ```jsonc
 // request: client -> relay -> agent
@@ -1993,6 +1995,228 @@ for this kind. The collapse rule counts a preview without a tab as its own subje
 (`preview:<id>`). The push message carries `preview_id` too; its tag is `hako:<session_id>`, or
 `hako:preview:<id>` without a tab. Each device has a switch for this kind (`kinds.preview_ready`,
 on by default), and a tap opens the preview's viewer (`/#/p/<id>`).
+
+### Mac browser (round 5)
+
+A preview, or any address, can also be shown in a real Google Chrome on the Mac, against
+`localhost`, exactly as the owner tests it there: backends, cookies, CORS, object-storage links and
+sign-in with the project's own localhost callback addresses all work unchanged. The phone sees a
+live picture of the page and sends input. The previews' own origins ("Phone browser", above) stay
+as a second, faster way to look at a preview.
+
+#### The browser on the Mac
+
+- Hako starts its own Chrome on demand (first viewer) and stops it after 15 minutes without one:
+  `--user-data-dir=<HAKO_DATA_DIR>/preview-browser` (persistent, so sign-ins made there are
+  remembered; never the owner's normal profile), `--remote-debugging-port=<a fixed free loopback
+  port chosen by Hako, not 0>` (port 0 makes Chrome set `navigator.webdriver`, and Google then
+  refuses sign-in), `--no-first-run`, `--no-default-browser-check`,
+  `--disable-backgrounding-occluded-windows`, `--disable-renderer-backgrounding`,
+  `--disable-background-timer-throttling`, and no automation flags (`--enable-automation`,
+  `--headless`, `--remote-allow-origins=*`) unless the fallback below needs them. It is launched
+  hidden (`open -g -j -n -a "Google Chrome" --args …` or the equivalent) so no window comes to the
+  front; a window that does appear is moved aside, never minimised (a minimised window stops
+  rendering).
+- Chrome is looked for at `/Applications/Google Chrome.app`, then `~/Applications/Google
+  Chrome.app`, then Chromium. With none, `browser.open` fails with a clear error (see
+  [Errors](#mac-browser-errors)). Hako installs nothing.
+- Fallback when the hidden window does not render frames reliably: `--headless=new` with the user
+  agent overridden to the normal Chrome user agent; Google sign-in may then be refused.
+- Hako speaks the DevTools protocol to it over the loopback port and enables only `Page`, `Target`
+  (auto-attach to new tabs and pop-ups), `Emulation`, `Input` and `Browser` (downloads), plus
+  `Runtime` and `Log` for pages on `localhost` origins only (console capture), never on third-party
+  pages such as Google's sign-in page, since enabling `Runtime` is a known automation signal.
+
+#### Sessions
+
+| Method | Params | Result |
+|---|---|---|
+| `browser.open` | `{ preview_id?, url?, viewport }` | `{ bid, tabs }` |
+| `browser.close` | `{ bid }` | `{}` |
+| `browser.navigate` | `{ bid, url }` | `{}` |
+| `browser.back` | `{ bid }` | `{}` |
+| `browser.forward` | `{ bid }` | `{}` |
+| `browser.reload` | `{ bid, hard }` | `{}` |
+| `browser.stop_loading` | `{ bid }` | `{}` |
+| `browser.viewport` | `{ bid, viewport }` | `{}` |
+| `browser.switch_tab` | `{ bid, tab }` | `{}` |
+| `browser.close_tab` | `{ bid, tab }` | `{}` |
+| `browser.dialog_reply` | `{ bid, accept, text }` | `{}` |
+| `browser.picker_reply` | `{ bid, id, values }` | `{}` |
+| `browser.file_chooser_reply` | `{ bid, id, paths }` | `{}` |
+| `browser.copy` | `{ bid }` | `{ text }` |
+
+Notifications from the client: `browser.ack` `{ bid, frame }` and `browser.input` `{ bid, events }`.
+Events from the agent: `browser.state`, `browser.dialog`, `browser.picker`, `browser.file_chooser`,
+`browser.download`, `browser.console` and `browser.closed`, each with the session's `bid` in its data.
+
+```ts
+type Viewport = {
+  width: number;          // CSS pixels
+  height: number;
+  scale: number;          // device pixel ratio, 1 to 3
+  mobile: boolean;
+  touch: boolean;
+  user_agent?: string;
+};
+type Tab = { id: string; url: string; title: string; active: boolean };
+```
+
+- `browser.open` opens a viewer session on a new tab of the Mac's browser, at `url` or, with
+  `preview_id`, at `http://localhost:<port><url_path>` of that preview. One session per phone
+  screen. A session has one **active** tab, whose frames it receives, and may own several tabs
+  (pop-ups, `target=_blank` links). `bid` is a whole number from 0 to 4,294,967,295 chosen by the
+  agent, unique among its open sessions; tab ids are strings chosen by the agent.
+- `browser.close` ends a session and closes its tabs. A session whose frames have gone
+  unacknowledged for 5 minutes is closed too, and so is every session when the agent's connection
+  to the relay drops.
+- `browser.navigate` goes to `url`, an absolute `http:` or `https:` address (the client turns a
+  typed `localhost:3000` into `http://localhost:3000/`). `browser.reload` with `hard: true`
+  bypasses the cache.
+- `browser.viewport` changes size, scale, mobile, touch and user agent
+  (`Emulation.setDeviceMetricsOverride`, `setTouchEmulationEnabled`, `setUserAgentOverride`, and
+  the screen orientation that follows from width and height). Rotation is a viewport change from
+  the client.
+- **Probe:** `browser.open` with `url: "?"` answers `bad_request` on an app that has the Mac
+  browser, and `not_supported`, as every method here, on an older one.
+
+The client sends `browser.open` with `timeout_ms: 60000`, since Chrome may have to start first.
+
+#### Frames (binary, agent -> relay -> the client that opened the session)
+
+```
+byte 0        0x03
+bytes 1..4    bid, unsigned 32-bit big-endian
+bytes 5..8    frame number, unsigned 32-bit big-endian
+bytes 9..10   CSS width of the page in this picture, unsigned 16-bit big-endian
+bytes 11..12  CSS height, unsigned 16-bit big-endian
+byte 13       format: 1 = JPEG, 2 = PNG
+rest          the image
+```
+
+- Pictures come from `Page.startScreencast` (JPEG, quality 70, at most the viewport times its
+  scale, at most 2 unacknowledged) and are relayed as they arrive.
+- The client acknowledges each frame with the notification `browser.ack` `{ bid, frame }`. The Mac
+  acknowledges to Chrome only then, which slows the stream to what the phone can take.
+- The client draws only the newest picture: a frame that arrives while another is being decoded
+  replaces the one waiting, and the one it replaces is not drawn. Every frame is still
+  acknowledged, the ones not drawn just before the next one that is, in the order they arrived,
+  and each picture after it has been drawn. So the acknowledgements of one session arrive in
+  ascending frame order, and the Mac must accept one for a frame it has already moved past.
+- The width and height in a frame are what the client maps a touch with, so a tap on a picture
+  from before a rotation still lands where it was aimed.
+
+#### Input
+
+`browser.input` `{ bid, events }`: events in the order they happened. Coordinates are CSS pixels of
+the viewport, fractions allowed.
+
+```ts
+type InputEvent =
+  | { type: "touch"; phase: "start" | "move" | "end" | "cancel"; points: { x: number; y: number; id: number }[] }
+  | { type: "mouse"; action: "move" | "down" | "up" | "wheel"; x: number; y: number;
+      button: "none" | "left" | "middle" | "right"; clicks: number; dx: number; dy: number; modifiers: number }
+  | { type: "scroll"; x: number; y: number; dx: number; dy: number }
+  | { type: "text"; text: string }
+  | { type: "key"; key: string; code: string; modifiers: number; action: "press" | "down" | "up" };
+```
+
+- `touch` becomes `Input.dispatchTouchEvent` when the viewport has `touch`, and mouse events
+  otherwise (`mousePressed` / `mouseMoved` / `mouseReleased`, left button, with a click count).
+  `end` and `cancel` carry the points that lifted, at their last position; the Mac passes Chrome
+  the points still down, which `Input.dispatchTouchEvent` expects. The client sends one finger at a
+  time: two fingers zoom the picture on the phone and never reach the page.
+- `mouse` comes from a desktop browser. `button` and `modifiers` are as the DevTools protocol has
+  them: `modifiers` is a bit set of Alt 1, Ctrl 2, Meta (Cmd) 4 and Shift 8. `clicks` is the click
+  count (2 for the second press of a double click); `dx` and `dy` are the wheel's deltas in CSS
+  pixels, 0 for the other actions.
+- `scroll` is a wheel event at that point: `dx` and `dy` in CSS pixels, positive to move the page's
+  content up or left, as a wheel's deltas are. It is how a drag scrolls in a viewport without
+  touch, and how the client turns the speed of a flick into a few decaying steps afterwards.
+- `text` becomes `Input.insertText`: typed text, pasted text and dictation, in any language.
+- `key` becomes `Input.dispatchKeyEvent` with the right `windowsVirtualKeyCode`, `key` as
+  `KeyboardEvent.key` names it and `code` as `KeyboardEvent.code` does (`""` when the client does
+  not know it): Enter, Backspace, Tab, Escape, the arrows, Home, End, PageUp, PageDown, Delete, and
+  Ctrl, Cmd, Alt and Shift combinations such as Cmd+A, Cmd+C, Cmd+V and Cmd+Z. `press` is a key
+  going down and up. On a Mac, Chrome does not turn a dispatched Cmd+A, C, V, X or Z into its
+  editing command by itself: the Mac adds `commands` (`selectAll`, `copy`, `paste`, `cut`, `undo`,
+  and `redo` for Cmd+Shift+Z) to the key-down event.
+
+#### Navigation and tabs
+
+Event `browser.state` `{ bid, tab, url, title, loading, can_back, can_forward, tabs }` on every
+change: `tab` is the active tab's id and `url`, `title`, `loading`, `can_back` and `can_forward`
+describe it. A pop-up or new tab that the page opens becomes active by itself, and when it closes
+its opener becomes active again (Google sign-in pop-ups). `browser.switch_tab` makes another tab of
+the session active; `browser.close_tab` closes one. Closing the last tab ends the session.
+
+#### Dialogs, pickers, files, downloads, copy and the console
+
+- **Dialogs.** Event `browser.dialog` `{ bid, kind, message, default }`, `kind` one of `"alert"`,
+  `"confirm"`, `"prompt"`, `"beforeunload"`; `default` is a prompt's default text, else `""`.
+  Answered with `browser.dialog_reply` `{ bid, accept, text }`.
+- **Pickers.** A `<select>` and the date, time and colour pickers are not drawn into screencast
+  frames, so a small script added to every `localhost` page (`Page.addScriptToEvaluateOnNewDocument`
+  in an isolated world) reports the one the owner opens, and the phone shows its own picker.
+  Event `browser.picker`:
+
+  ```ts
+  { bid, kind: "select", id: string, multiple: boolean,
+    options: { label: string; value: string; selected: boolean; disabled: boolean; group?: string | null }[] }
+  { bid, kind: "date" | "time" | "datetime-local" | "month" | "week" | "color", id: string,
+    value: string, min?: string | null, max?: string | null, step?: string | null }
+  ```
+
+  `browser.picker_reply` `{ bid, id, values }` (the chosen values; one for a value picker) sets the
+  value and fires `input` and `change` as a choice of the user would. A picker the owner closes
+  without choosing sends nothing.
+- **Files.** With `Page.setInterceptFileChooserDialog` on, event `browser.file_chooser`
+  `{ bid, id, multiple, accept }` (`accept` the input's attribute, `""` without one). The phone
+  uploads the chosen files with the transfer methods to the uploads area (`destination: { kind:
+  "uploads" }`), then answers `browser.file_chooser_reply` `{ bid, id, paths }` with the `path`s
+  `fs.upload_end` returned; empty `paths` is a cancel. The Mac sets them with
+  `DOM.setFileInputFiles`.
+- **Downloads.** `Browser.setDownloadBehavior` into `<HAKO_DATA_DIR>/preview-downloads/` (deleted
+  after 7 days). Event `browser.download` `{ bid, path, name, size, done }`: `path` absolute on the
+  Mac, `name` the file's name, `size` in bytes (-1 while unknown); sent when a download starts
+  (`done: false`) and when it has finished (`done: true`). The phone then fetches it with
+  `fs.download` and offers Save to phone.
+- **Copy.** `browser.copy` `{ bid }` -> `{ text }`: the page's current selection, including a
+  selection inside a text field, read in the isolated world on `localhost` pages; `""` when nothing
+  is selected. On other pages Cmd+C and reading the Mac's clipboard is not done, so the answer is
+  `failed`.
+- **Console.** Event `browser.console` `{ bid, level, text, source, line }` for `localhost` pages,
+  at most 200 per page load and 2,000 characters each. `level` is `"error"`, `"warn"`, `"info"`,
+  `"log"` or `"debug"`; uncaught errors and unhandled rejections are `"error"`. Failed requests to
+  `localhost` come as `level: "network"` with `url` and `status` (0 when no answer came) added and
+  `text` saying what failed.
+
+#### When a session ends
+
+Event `browser.closed` `{ bid, reason }` when the Mac ends a session by itself (its last tab
+closed, 5 minutes without acknowledgements, Chrome quit), with `reason` a short sentence. A request
+naming a `bid` the agent does not have (any more) answers `not_found`, which the client takes the
+same way.
+
+#### Mac browser errors
+
+`bad_request` for malformed params and an unusable `url`; `not_found` for an unknown `bid`,
+`preview_id`, `tab` or picker and file chooser `id`; `failed` with a sentence for the owner
+otherwise. When no Chrome is installed, `browser.open` answers `failed` with a message that says
+so, such as "Google Chrome is not installed on this Mac"; the client recognises the words "Chrome"
+and "not installed" or "not found" in it.
+
+#### What the relay does
+
+- It records which client each session belongs to when the agent answers that client's
+  `browser.open`, and forgets it on that client's `browser.close` and on `browser.closed`.
+- Frames of type `0x03` go to that client only. A frame for a session nobody owns (its client left,
+  or gave up waiting for `browser.open`) makes the relay send the agent `browser.close` for it,
+  once.
+- `browser.*` events go to the session's owner only, by the `bid` in their data.
+- When a client disconnects, the relay sends the agent `browser.close` for each of its sessions
+  (with `relay:` ids; the answers are dropped). When the agent drops, every session is forgotten.
+- Everything else (the requests, `browser.ack`, `browser.input`) passes as for any method.
 
 ## Versioning
 
