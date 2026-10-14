@@ -27,7 +27,10 @@ import {
   GIT_OUTPUT_LIMIT_BYTES,
   GIT_STATUS_LIMIT,
   GIT_SUBJECT_LIMIT,
+  conflictMarkerMessage,
+  hasConflictMarker,
   isCommitId,
+  mergedBranchOf,
   isValidRepoPath,
   type ParsedStatus,
   parseNumstat,
@@ -45,6 +48,9 @@ import type {
   GitFile,
   GitFileState,
   GitLogResult,
+  GitMergeAbortResult,
+  GitMergeResult,
+  GitMergeState,
   GitOperation,
   GitRef,
   GitShowResult,
@@ -592,6 +598,19 @@ export function createGitFixture(home: string): { teammateScript: string } {
   commitAll(site, "Use the address as the title");
   git(site, "fetch", "-q", "origin");
 
+  // Branches to merge into main: one that changes the title main has just changed (a conflict),
+  // one that only adds to main (a fast-forward).
+  git(site, "switch", "-q", "-c", "copy/title", "main~1");
+  write(join(site, "index.html"), page.replace("<title>Hako</title>", "<title>Ege's site</title>"));
+  write(join(site, "about.html"), "<!doctype html>\n<title>About</title>\n<p>Hello.</p>\n");
+  at(0.5);
+  commitAll(site, "Call the site by its owner");
+  git(site, "switch", "-q", "-c", "docs/readme", "main");
+  write(join(site, "README.md"), "# egehakan.com\n\nThe personal site, as plain HTML and CSS.\n");
+  at(0.4);
+  commitAll(site, "Say what the site is");
+  git(site, "switch", "-q", "main");
+
   // The linked worktree: a branch that has never been pushed, with work in progress.
   const redesign = join(code, "egehakan.com-redesign");
   write(join(redesign, "header.html"), "<header>\n  <h1>egehakan.com</h1>\n</header>\n");
@@ -629,6 +648,8 @@ export type GitMethodOptions = {
   history: boolean;
   /** Makes a switch of branch take this much longer, as a checkout of a huge tree would. */
   switchDelayMs: number;
+  /** False leaves out merging, and the merge state of `git.status`, as an app from before them. */
+  merge: boolean;
 };
 
 /** How often the mock looks for changes made behind its back, by its shell or by an editor. */
@@ -1060,6 +1081,111 @@ export function createGitMethods(
     return { kind: "text", diff };
   }
 
+  async function gitDirOf(repo: string): Promise<string> {
+    return (await read(repo, ["rev-parse", "--path-format=absolute", "--git-dir"])).trim();
+  }
+
+  /** The paths git has not merged yet, relative to the repository. */
+  async function unmergedPaths(repo: string): Promise<string[]> {
+    const listing = await read(repo, ["diff", "--name-only", "--diff-filter=U", "-z"]);
+    return [...new Set(listing.split("\0").filter(Boolean))].sort();
+  }
+
+  /** What `git.status` says about a merge in progress, or null when there is none. */
+  async function mergeState(repo: string): Promise<GitMergeState | null> {
+    const gitDir = await gitDirOf(repo);
+    if (!existsSync(join(gitDir, "MERGE_HEAD"))) return null;
+    let prepared = "";
+    try {
+      prepared = readFileSync(join(gitDir, "MERGE_MSG"), "utf8");
+    } catch {
+      // Git writes the message with the merge; without it there is simply nothing to prefill.
+    }
+    const message = prepared
+      .split("\n")
+      .filter((line) => !line.startsWith("#"))
+      .join("\n")
+      .trim();
+    return {
+      branch: mergedBranchOf(prepared.split("\n", 1)[0] ?? ""),
+      message,
+      conflicts: await unmergedPaths(repo),
+    };
+  }
+
+  /** The unmerged files that still hold a conflict marker, when a merge is in progress. */
+  async function filesWithMarkers(repo: string): Promise<string[]> {
+    if (!existsSync(join(await gitDirOf(repo), "MERGE_HEAD"))) return [];
+    const marked: string[] = [];
+    for (const path of await unmergedPaths(repo)) {
+      try {
+        if (hasConflictMarker(readFileSync(join(repo, path), "utf8"))) marked.push(path);
+      } catch {
+        // Deleted on one side and not brought back: nothing to look in.
+      }
+    }
+    return marked;
+  }
+
+  const merging: Record<string, Method> = {
+    "git.merge": async (params): Promise<GitMergeResult> => {
+      const repo = await resolve(params.repo);
+      const { branch, kind } = params;
+      if (kind !== "local" && kind !== "remote") {
+        throw new GitFailure("bad_request", "kind must be local or remote");
+      }
+      if (typeof branch !== "string" || branch === "" || branch.startsWith("-")) {
+        throw new GitFailure("bad_request", "branch must be the name of a branch");
+      }
+      const ref = `${kind === "local" ? "refs/heads" : "refs/remotes"}/${branch}`;
+      if ((await run(repo, ["show-ref", "--verify", "-q", ref])).code !== 0) {
+        throw new GitFailure("not_found", `No ${kind} branch ${branch} in this repository`);
+      }
+      const current = await currentBranch(repo);
+      if (current === null) {
+        throw new GitFailure(
+          "bad_request",
+          "HEAD is detached, so there is no branch to merge into",
+        );
+      }
+      if (kind === "local" && branch === current) {
+        throw new GitFailure("bad_request", `${branch} is the current branch`);
+      }
+      return exclusively(repo, async () => {
+        const before = await hashOf(repo, "HEAD");
+        const mergeHead = join(await gitDirOf(repo), "MERGE_HEAD");
+        // Git refuses to start over an unfinished merge; its conflicts are not this merge's.
+        const wasMerging = existsSync(mergeHead);
+        const result = await run(repo, ["merge", "--no-edit", ref]);
+        const output = tail(result.output);
+        const head = (await hashOf(repo, "HEAD")) ?? "";
+        const conflicts = !wasMerging && existsSync(mergeHead) ? await unmergedPaths(repo) : [];
+        if (result.code !== 0) {
+          if (conflicts.length > 0) return { outcome: "conflicts", head, conflicts, output };
+          throw new GitFailure("git_failed", output);
+        }
+        const parents = (await read(repo, ["rev-list", "--parents", "-n", "1", "HEAD"]))
+          .trim()
+          .split(" ")
+          .slice(1);
+        const outcome =
+          head === before ? "up_to_date" : parents.length > 1 ? "merged" : "fast_forward";
+        return { outcome, head, conflicts: [], output };
+      });
+    },
+
+    "git.merge_abort": async (params): Promise<GitMergeAbortResult> => {
+      const repo = await resolve(params.repo);
+      if (!existsSync(join(await gitDirOf(repo), "MERGE_HEAD"))) {
+        throw new GitFailure("bad_request", "No merge is in progress in this repository");
+      }
+      return exclusively(repo, async () => {
+        check(await run(repo, ["merge", "--abort"]));
+        return { head: (await hashOf(repo, "HEAD")) ?? "" };
+      });
+    },
+  };
+
   const history: Record<string, Method> = {
     "git.branches": async (params): Promise<GitBranchesResult> => {
       const repo = await resolve(params.repo);
@@ -1244,6 +1370,7 @@ export function createGitMethods(
 
   return {
     ...(options.history ? history : {}),
+    ...(options.merge ? merging : {}),
 
     "git.repos": async (): Promise<GitReposResult> => {
       if (options.empty) return { repos: [] };
@@ -1285,6 +1412,7 @@ export function createGitMethods(
         repo: await describe(repo, status),
         files,
         truncated: status.files.length > GIT_STATUS_LIMIT,
+        ...(options.merge ? { merge: await mergeState(repo) } : {}),
       };
     },
 
@@ -1349,6 +1477,10 @@ export function createGitMethods(
         throw new GitFailure("bad_request", "message is too long");
       }
       return exclusively(repo, async () => {
+        if (options.merge) {
+          const marked = await filesWithMarkers(repo);
+          if (marked.length > 0) throw new GitFailure("conflict", conflictMarkerMessage(marked));
+        }
         const staged = await run(repo, ["add", "-A"]);
         if (staged.code !== 0) check(staged);
         const output = check(staged, await run(repo, ["commit", "-F", "-"], message));

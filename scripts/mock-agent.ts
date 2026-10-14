@@ -22,6 +22,9 @@
 // made in it. MOCK_FOLDERS=0 leaves `folder.create` and `fs.mkdir` out, as the desktop app before
 // them would.
 //
+// Tabs and folders can be renamed (round 2). MOCK_RENAME=0 leaves `tab.rename` and `folder.rename`
+// out, as the desktop app before them would.
+//
 // Files and folders can be created, renamed, copied, moved, put in a "Trash" directory at the top
 // of that tree, zipped and unzipped there (round 1). MOCK_OPS=0 leaves those methods out, as the
 // desktop app before them would, and MOCK_OPS_DELAY_MS=4000 makes them slow.
@@ -34,7 +37,7 @@
 // The folders of that tree are git repositories, built at start with the real `git` command line,
 // and the source control methods run git in them and refuse every repository outside the tree.
 // MOCK_GIT=0 leaves those methods out, MOCK_GIT_HISTORY=0 leaves out only branches, switching and
-// the commit graph, MOCK_GIT_EMPTY=1 answers that there are no repositories,
+// the commit graph, MOCK_GIT_MERGE=0 leaves out only merging, MOCK_GIT_EMPTY=1 answers that there are no repositories,
 // MOCK_GIT_DELAY_MS=1500 makes every answer slow, MOCK_GIT_NETWORK_DELAY_MS=25000 makes push and
 // pull take longer than the relay waits for an ordinary request, and MOCK_GIT_SWITCH_DELAY_MS=65000
 // makes a switch of branch outlast the minute the client waits for one.
@@ -70,6 +73,8 @@ import {
   PING_INTERVAL_MS,
   PROTOCOL_VERSION,
   type Tab,
+  TAB_TITLE_MAX,
+  FOLDER_NAME_MAX,
   type TerminalTheme,
   type Window,
 } from "../shared/protocol.ts";
@@ -96,6 +101,7 @@ const TRANSFERS_ENABLED = FS_ENABLED && process.env.MOCK_TRANSFERS !== "0";
 const FOLDERS_ENABLED = process.env.MOCK_FOLDERS !== "0";
 const OPS_ENABLED = FS_ENABLED && process.env.MOCK_OPS !== "0";
 const OPS_DELAY_MS = Number(process.env.MOCK_OPS_DELAY_MS ?? 0);
+const RENAME_ENABLED = process.env.MOCK_RENAME !== "0";
 const GIT_ENABLED = process.env.MOCK_GIT !== "0";
 const GIT_DELAY_MS = Number(process.env.MOCK_GIT_DELAY_MS ?? 0);
 const DEFAULT_COLS = 120;
@@ -279,12 +285,44 @@ function shellHome(): string {
   if (shellDirectory !== null) return shellDirectory;
   shellDirectory = process.env.MOCK_SHELL_DIR ?? HOME;
   mkdirSync(shellDirectory, { recursive: true });
+  const bin = join(shellDirectory, ".mock-bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, "mouse-test"), readFileSync(MOUSE_TEST), { mode: 0o755 });
+  writeFileSync(join(bin, "show-paths"), SHOW_PATHS, { mode: 0o755 });
   writeFileSync(
     join(shellDirectory, ".zshrc"),
-    "PROMPT='%F{yellow}mock%f %1~ %# '\nunsetopt beep\nunset HISTFILE\n",
+    "PROMPT='%F{yellow}mock%f %1~ %# '\nunsetopt beep\nunset HISTFILE\npath=(~/.mock-bin $path)\n" +
+      "print -P '%F{8}Try show-paths (paths to tap) and mouse-test (taps in a program that reads the mouse).%f'\n",
   );
   return shellDirectory;
 }
+
+const MOUSE_TEST = fileURLToPath(new URL("./mouse-test.py", import.meta.url));
+
+/** Prints paths of every kind the terminal makes tappable, and a few it must not. */
+const SHOW_PATHS = `#!/bin/sh
+cd "$HOME"
+esc=$(printf '\\033')
+echo "Absolute:   $HOME/Documents/GitHub/hako-remote/README.md"
+echo "Home:       ~/Documents/GitHub/hako-remote/src/App.tsx:12"
+echo "Relative:   Documents/GitHub/hako-remote/src/relay.ts:3:14"
+echo "Directory:  ~/Downloads  and  Documents/GitHub/hako"
+echo "Quoted:     \"Documents/GitHub/hako-remote/samples/notes.txt\", and 'samples/missing.txt'"
+echo "Missing:    ~/Documents/nowhere.txt:3"
+echo
+echo "As Claude Code prints them:"
+echo "⏺ Read(Documents/GitHub/hako-remote/samples/app.py)"
+echo "  ⎿  Read 22 lines"
+echo "⏺ Update(Documents/GitHub/egehakan.com/index.html)"
+echo "  ⎿  Updated Documents/GitHub/egehakan.com/index.html with 1 addition"
+echo "⏺ Error in Documents/GitHub/hako/app/src/remote/protocol.rs:14:9."
+st=$(printf '\\033\\\\')
+bel=$(printf '\\007')
+printf '⏺ Links: %s]8;;file://%s%s/Documents/GitHub/hako/Cargo.toml%sthe hako manifest%s]8;;%s' \\
+  "$esc" "$(hostname)" "$HOME" "$st" "$esc" "$st"
+printf ' and %s]8;;file://%s/Documents/GitHub/hako/docs%sits docs folder%s]8;;%s\\n' \\
+  "$esc" "$HOME" "$bel" "$esc" "$bel"
+`;
 
 class ShellTerminal extends MockTerminal {
   private readonly child: ChildProcess;
@@ -333,6 +371,8 @@ class ShellTerminal extends MockTerminal {
 }
 
 const terminals = new Map<string, MockTerminal>();
+/** What each tab is called when nobody has named it: the title of its first pane. */
+const automaticTitles = new Map<string, string>();
 let nextId = 1;
 
 function newId(prefix: string): string {
@@ -351,7 +391,9 @@ function terminalPane(
 }
 
 function tab(title: string, folderId: string | null, panes: Pane[], active = false): Tab {
-  return { id: newId("tab"), title, active, folder_id: folderId, panes };
+  const id = newId("tab");
+  automaticTitles.set(id, title);
+  return { id, title, active, folder_id: folderId, panes };
 }
 
 /** A pane running a real shell. `cwd` is only what the workspace list shows for it. */
@@ -643,6 +685,10 @@ const methods: Record<string, Method> = {
   "theme.get": () => THEME,
 };
 
+function defaultFolderName(directory: string): string {
+  return directory === HOME ? "Home" : directory.slice(directory.lastIndexOf("/") + 1) || "/";
+}
+
 const folderMethods: Record<string, Method> = FOLDERS_ENABLED
   ? {
       "folder.create": (params) => {
@@ -672,7 +718,7 @@ const folderMethods: Record<string, Method> = FOLDERS_ENABLED
         if (existing) return { folder_id: existing.id };
         const folder: Folder = {
           id: newId("folder"),
-          name: shown === HOME ? "Home" : shown.slice(shown.lastIndexOf("/") + 1) || "/",
+          name: defaultFolderName(shown),
           directory: shown,
           color: null,
           icon: null,
@@ -680,6 +726,53 @@ const folderMethods: Record<string, Method> = FOLDERS_ENABLED
         window.folders.push(folder);
         workspaceChanged();
         return { folder_id: folder.id };
+      },
+    }
+  : {};
+
+function findFolder(folderId: unknown): { window: Window; folder: Folder } {
+  for (const window of windows) {
+    const folder = window.folders.find((candidate) => candidate.id === folderId);
+    if (folder) return { window, folder };
+  }
+  throw new RpcFailure("not_found", "No such folder");
+}
+
+/** A new title or name: trimmed and within `max` characters, or null for the default. */
+function newName(value: unknown, field: string, max: number): string | null {
+  if (value === null) return null;
+  if (typeof value !== "string") {
+    throw new RpcFailure("bad_request", `${field} must be a string or null`);
+  }
+  const trimmed = value.trim();
+  if (trimmed === "" || [...trimmed].length > max) {
+    throw new RpcFailure("bad_request", `${field} must be 1 to ${max} characters`);
+  }
+  return trimmed;
+}
+
+const renameMethods: Record<string, Method> = RENAME_ENABLED
+  ? {
+      "tab.rename": (params) => {
+        // A tab id is never "?", which is how a client asks whether renaming is there at all.
+        if (params.tab_id === "?" || typeof params.tab_id !== "string") {
+          throw new RpcFailure("bad_request", "tab_id must be the id of a tab");
+        }
+        const title = newName(params.title, "title", TAB_TITLE_MAX);
+        const found = findTab(params.tab_id);
+        found.tab.title = title ?? automaticTitles.get(found.tab.id) ?? "zsh";
+        workspaceChanged();
+        return {};
+      },
+      "folder.rename": (params) => {
+        if (typeof params.folder_id !== "string") {
+          throw new RpcFailure("bad_request", "folder_id must be the id of a folder");
+        }
+        const name = newName(params.name, "name", FOLDER_NAME_MAX);
+        const { folder } = findFolder(params.folder_id);
+        folder.name = name ?? defaultFolderName(folder.directory);
+        workspaceChanged();
+        return {};
       },
     }
   : {};
@@ -707,6 +800,7 @@ const gitMethods: Record<string, Method> = GIT_ENABLED
       onChanged: (repo) => sendEvent("git.changed", { repo }),
       history: process.env.MOCK_GIT_HISTORY !== "0",
       switchDelayMs: Number(process.env.MOCK_GIT_SWITCH_DELAY_MS ?? 0),
+      merge: process.env.MOCK_GIT_MERGE !== "0",
     })
   : {};
 
@@ -733,13 +827,14 @@ function handleFrame(text: string): void {
   const delay = Object.hasOwn(operations?.methods ?? {}, frame.method)
     ? FS_DELAY_MS + OPS_DELAY_MS
     : Object.hasOwn(fsMethods, frame.method)
-    ? FS_DELAY_MS
-    : Object.hasOwn(gitMethods, frame.method)
-      ? GIT_DELAY_MS
-      : 0;
+      ? FS_DELAY_MS
+      : Object.hasOwn(gitMethods, frame.method)
+        ? GIT_DELAY_MS
+        : 0;
   const method =
     methods[frame.method] ??
     folderMethods[frame.method] ??
+    renameMethods[frame.method] ??
     fsMethods[frame.method] ??
     gitMethods[frame.method];
   if (!method) {
@@ -1010,6 +1105,7 @@ if (transfers) {
 }
 
 if (!FOLDERS_ENABLED) console.log("folder.create and fs.mkdir are off (MOCK_FOLDERS=0)");
+if (!RENAME_ENABLED) console.log("tab.rename and folder.rename are off (MOCK_RENAME=0)");
 if (operations) console.log(`the Trash is ${operations.trash}`);
 else if (FS_ENABLED) console.log("renaming, copying, zipping and the rest are off (MOCK_OPS=0)");
 

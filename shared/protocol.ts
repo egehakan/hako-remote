@@ -100,6 +100,12 @@ export type Workspace = { windows: Window[] };
 export type TabCreateParams = { window_id?: string; folder_id?: string; directory?: string };
 export type TabCreateResult = { tab_id: string; session_id: string };
 
+export type TabRenameParams = { tab_id: string; title: string | null };
+export type FolderRenameParams = { folder_id: string; name: string | null };
+/** The longest a tab's title and a folder's name may be, counted after trimming. */
+export const TAB_TITLE_MAX = 200;
+export const FOLDER_NAME_MAX = 100;
+
 export type FolderCreateParams = { directory: string; window_id?: string };
 export type FolderCreateResult = { folder_id: string };
 
@@ -237,7 +243,23 @@ export type GitFile = {
 };
 
 export type GitReposResult = { repos: GitRepo[] };
-export type GitStatusResult = { repo: GitRepo; files: GitFile[]; truncated: boolean };
+/** A merge in progress, as `git.status` reports it. */
+export type GitMergeState = {
+  /** The name being merged, read from git's prepared message; null when it could not be read. */
+  branch: string | null;
+  /** The prepared merge message, without comment lines. */
+  message: string;
+  /** The unmerged paths, relative to the repository. */
+  conflicts: string[];
+};
+
+export type GitStatusResult = {
+  repo: GitRepo;
+  files: GitFile[];
+  truncated: boolean;
+  /** Null without a merge in progress; left out by an app from before merging. */
+  merge?: GitMergeState | null;
+};
 
 export type GitDiffParams = {
   repo: string;
@@ -285,6 +307,19 @@ export type GitBranchesResult = {
 export type GitSwitchKind = "local" | "remote" | "new";
 export type GitSwitchParams = { repo: string; branch: string; kind: GitSwitchKind };
 export type GitSwitchResult = { current: string | null; head: string | null };
+
+export type GitMergeKind = "local" | "remote";
+export type GitMergeParams = { repo: string; branch: string; kind: GitMergeKind };
+export type GitMergeOutcome = "up_to_date" | "fast_forward" | "merged" | "conflicts";
+export type GitMergeResult = {
+  outcome: GitMergeOutcome;
+  /** HEAD's full hash afterwards. */
+  head: string;
+  /** The unmerged paths when `outcome` is `conflicts`, else empty. */
+  conflicts: string[];
+  output: string;
+};
+export type GitMergeAbortResult = { head: string };
 
 export type GitRefKind = "head" | "local" | "remote" | "tag";
 export type GitRef = { name: string; kind: GitRefKind };
