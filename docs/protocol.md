@@ -360,6 +360,16 @@ arrive as stray input. Neither the snapshot nor the stream needs to hide such re
 | `fs.read` | `{ path }` | `ReadResult` |
 | `fs.write` | `{ path, content, expected_mtime }` | `{ mtime, size }` |
 | `fs.mkdir` | `{ path }` | `{}` |
+| `fs.stat` | `{ path }` | `{ kind, size, mtime, target }` |
+| `fs.create_file` | `{ path }` | `{ mtime }` |
+| `fs.rename` | `{ path, name }` | `{ path }` |
+| `fs.copy` | `{ sources, destination, on_conflict }` | `{ results: ItemResult[] }` |
+| `fs.move` | `{ sources, destination, on_conflict }` | `{ results: ItemResult[] }` |
+| `fs.trash` | `{ paths }` | `{ results: ItemResult[] }` |
+| `fs.archive` | `{ path, skip_heavy }` | `{ path, name, size, skipped }` |
+| `fs.extract` | `{ path, destination }` | `{ path, entries }` |
+
+The last eight are described under [File operations (round 1)](#file-operations-round-1).
 
 ```ts
 type Root = { path: string; name: string; source: "folder" | "terminal" | "home" };
@@ -375,14 +385,20 @@ type ReadResult =
   | { kind: "image"; mime: string; data: string; mtime: number; size: number }
   | { kind: "binary"; size: number }
   | { kind: "too_large"; size: number; limit: number };
+type ItemResult = {
+  source: string;
+  path: string | null;
+  error: { code: string; message: string } | null;
+};
 ```
 
 These methods read and change files on the Mac as the user Hako runs as. They are not confined to
 the roots: any path that user can reach is served, since the same client already has a shell. The
 first four read directories and files and rewrite existing files, and `fs.mkdir` creates one
-directory. None of them creates a file, or renames, moves or deletes anything, and no event is sent
-when a file changes on the Mac: the client asks again. Whole files of any kind, in either
-direction, and new files, are what [Transfers](#transfers-sprint-7) are for.
+directory. Those of [round 1](#file-operations-round-1) create empty files, rename, copy, move, put
+things in the Trash, zip a directory and unpack a zip; none of them deletes anything permanently.
+No event is sent when a file changes on the Mac: the client asks again. Whole files of any kind, in
+either direction, and new files with contents, are what [Transfers](#transfers-sprint-7) are for.
 
 #### Paths
 
@@ -527,11 +543,11 @@ The file methods add these codes to the ones under [Frames](#frames):
 | Code | Meaning |
 |---|---|
 | `not_found` | Nothing exists at `path`, or a link on the way points nowhere. |
-| `not_a_directory` | `fs.list` of something that is not a directory; `fs.mkdir` under a parent that is not one. |
+| `not_a_directory` | `fs.list` of something that is not a directory; `fs.mkdir` or `fs.create_file` under a parent that is not one; a `destination` that is not one. |
 | `is_a_directory` | `fs.read` or `fs.write` of a directory. |
 | `permission_denied` | The Mac refused: the operating system's `EACCES` or `EPERM`, or a macOS privacy rule. |
-| `conflict` | `fs.write`: the file's `mtime` is not `expected_mtime`. `fs.mkdir`: something already exists at `path`. |
-| `too_large` | `fs.write`: `content` is over the limit. (`fs.read` reports a large file as a result, not as an error.) |
+| `conflict` | `fs.write`: the file's `mtime` is not `expected_mtime`. `fs.mkdir`, `fs.create_file`: something already exists at `path`. `fs.rename`: the name is taken. `fs.copy`, `fs.move`: an item's name is taken (see `on_conflict`). |
+| `too_large` | `fs.write`: `content` is over the limit. `fs.archive`, `fs.extract`: over a limit, with `limit` (see [round 1](#too_large-with-limit)). (`fs.read` reports a large file as a result, not as an error.) |
 | `bad_request` | A malformed path or a missing or mistyped parameter. |
 | `failed` | Anything else. |
 
@@ -540,6 +556,131 @@ The file methods add these codes to the ones under [Frames](#frames):
 that does not know a code treats it as `failed`. An agent without these methods answers
 `not_supported`, as for any unknown method, and the client tells the owner to update Hako on the
 Mac.
+
+### File operations (round 1)
+
+Path rules, `mtime` units, the name rule, error codes and the `timeout_ms` mechanism are those
+above unless stated here.
+
+The **name rule** (as for `fs.mkdir`): a single path component of 1 to 255 bytes, not `.` or `..`,
+no `/`, no NUL; otherwise `bad_request`.
+
+All the methods of this section answer `not_supported` on an older desktop app. The client probes
+once per Mac connection (like `folder.create` with `directory: "?"`) by sending `fs.stat` with
+`path: "?"`; an app that has round 1 answers `bad_request`.
+
+#### `fs.stat`
+
+`{ path }` -> `{ kind, size, mtime, target }`
+
+`kind` as in `fs.list` (`dir`, `file`, `symlink`, `other`), `size` bytes, `mtime` ms, `target` the
+symlink target or null. Symlinks are reported, not followed (so `kind` can be `symlink`);
+`not_found`, `permission_denied`.
+
+`target` here is what the link holds, as a string (`../docs`), unlike the `target` of an `fs.list`
+entry, which says what a link points to (`"dir"`, `"file"`, `"other"`). For a symlink, `size` and
+`mtime` are the link's own.
+
+#### `fs.create_file`
+
+`{ path }` -> `{ mtime }`
+
+Creates an empty regular file (mode from the umask). The parent must exist and be a directory
+(`not_found`, `not_a_directory`); an existing entry gives `conflict`; the last component follows
+the name rule.
+
+#### `fs.rename`
+
+`{ path, name }` -> `{ path }`
+
+Renames a file, directory or symlink within its own directory; `name` follows the name rule; result
+is the new absolute path. An existing entry with that name gives `conflict`, except a change of
+letter case only of the same entry, which is allowed. Renaming `/` or the home directory is
+`bad_request`.
+
+#### `fs.copy` and `fs.move`
+
+`{ sources, destination, on_conflict }` -> `{ results }`
+
+- `sources`: 1 to 500 absolute paths (files, directories, symlinks). `destination`: an existing
+  directory (`not_found`, `not_a_directory`, `permission_denied` for the whole request).
+  `on_conflict`: `"fail"` (default), `"rename"` (keep both: `name (2).ext`, `name (3).ext` …; for
+  directories `name (2)`), or `"replace"` (only replaces a regular file or symlink with a regular
+  file or symlink; replacing a directory, or a file with a directory, is a `conflict` for that
+  item).
+- `results`: one entry per source, in order: `{ source, path, error }`. `path` is the new absolute
+  path or null; `error` is null or `{ code, message }` with the usual codes. Items are
+  independent: one failing item never undoes others.
+- Copying an item into its own directory with `"fail"` gives `conflict` for that item; with
+  `"rename"` it makes a copy with a `(2)` name (this is how the client offers Duplicate).
+- Copying or moving a directory into itself or one of its descendants is `bad_request` for that
+  item. Moving an item onto itself (same path) is a no-op with `path` equal to `source`.
+- Copy is recursive, keeps permissions and modification times, and copies symlinks as symlinks
+  (never follows them). Move is a rename when possible and otherwise copy then delete on success
+  of the copy.
+- The client sends `timeout_ms: 300000`. The desktop stops working on a request after 240 seconds;
+  items not finished by then get `{ code: "failed", message: "Stopped after 240 seconds" }` and
+  anything half-copied for that item is removed.
+
+Where the contract left room:
+
+- The numbered names of `"rename"` are those of [When the name is taken](#when-the-name-is-taken)
+  for a file (`notes (2).txt`, `archive.tar (2).gz`, `.env (2)`). A directory is numbered at the
+  end of its whole name, dots and all: `v1.2` becomes `v1.2 (2)`.
+- Copying an item into its own directory with `"replace"` would replace the item with itself; it is
+  a `conflict` for that item and nothing changes. The client never asks for it: it copies into the
+  same directory only with `"rename"`.
+
+#### `fs.trash`
+
+`{ paths }` -> `{ results }`
+
+- `paths`: 1 to 500 absolute paths. Each is moved to the macOS Trash (so "Put Back" works on the
+  Mac); `results` as for copy: `{ source, path, error }` with `path` the item's location in the
+  Trash when known, else null. Never deletes permanently. Moving `/`, the home directory or a tab
+  folder's own directory to the Trash is `bad_request`.
+
+#### `fs.archive`
+
+`{ path, skip_heavy }` -> `{ path, name, size, skipped }`
+
+- Zips a directory (a file is `bad_request`; use `fs.download` for files) into a fresh file under
+  the desktop's archives area (`~/.hako/archives/<random>/<directory name>.zip` on the owner's Mac;
+  the profile-aware data directory), and returns its absolute path, file name, size in bytes and
+  `skipped`, the number of directories left out.
+- `skip_heavy` (default true) leaves out every directory named `.git`, `node_modules`, `.venv`,
+  `venv`, `__pycache__`, `.next`, `.turbo`, `.gradle`, `Pods`, `DerivedData`, and every directory
+  named `target` that contains a `CACHEDIR.TAG` file or a `.rustc_info.json`. With
+  `skip_heavy: false` everything is included.
+- Symlinks are stored as symlinks. Unreadable entries are skipped silently and do not fail the
+  archive. The zip uses standard deflate and UTF-8 names and opens in macOS, iOS Files and Windows.
+- If the archive would exceed the transfer limit (`max_bytes`), work stops and the answer is
+  `too_large` with `limit`. The client sends `timeout_ms: 300000`; the desktop stops after 240
+  seconds with `failed`.
+- The client then downloads the returned path with the existing `fs.download`. Archives are
+  deleted one hour after they were made, and at the desktop app's start.
+
+#### `fs.extract`
+
+`{ path, destination }` -> `{ path, entries }`
+
+- Extracts a `.zip` file into a NEW directory inside `destination` named after the zip without its
+  extension (`photos.zip` -> `photos`, keep-both naming `photos (2)` when taken), and returns that
+  directory's path and the number of entries written.
+- Refuses (`bad_request`) archives with an entry that would land outside the new directory
+  (absolute paths, `..`, symlinks pointing outside), encrypted archives, and archives whose total
+  uncompressed size exceeds 1 GiB or that contain more than 50,000 entries (`too_large` with
+  `limit`). A corrupt archive is `failed` with the reason. On any failure the new directory is
+  removed. `__MACOSX` folders and `.DS_Store` files are skipped.
+- `timeout_ms: 300000` from the client, 240 seconds on the desktop as above.
+
+#### `too_large` with `limit`
+
+An error frame's `error` is `{ code, message }` everywhere else. "`too_large` with `limit`" adds
+one field to it: `{ code: "too_large", message, limit }`, where `limit` is the number that was
+exceeded. For `fs.archive` it is `max_bytes`, in bytes. For `fs.extract` it is either 1,073,741,824
+(bytes, for the uncompressed size) or 50,000 (entries); `message` says which. A client that finds no
+`limit` says only that the archive is too large.
 
 ### Transfers (sprint 7)
 
@@ -572,7 +713,7 @@ as: the user Hako runs as, with no confinement to the roots.
 
 | | Value |
 |---|---|
-| Largest file, either direction (`max_bytes`) | 50 MiB: 52,428,800 bytes |
+| Largest file, either direction (`max_bytes`) | 200 MiB: 209,715,200 bytes (50 MiB before round 1) |
 | Most bytes in one piece, before base64 (`chunk_bytes`) | 1 MiB: 1,048,576 bytes |
 | Largest frame a piece makes | about 1.4 MB, against the relay's 8 MB |
 | An unfinished upload is kept | 15 minutes after the last request that named it |
@@ -580,7 +721,8 @@ as: the user Hako runs as, with no confinement to the roots.
 | A file stays in the uploads area | 7 days |
 
 `fs.transfer_info` answers with the first two as the agent has them. In this version they are the
-numbers above, and an agent must not report a `chunk_bytes` over 4,194,304. The client takes both
+numbers above (clients must keep reading the limit from `fs.transfer_info`, since an app from before
+round 1 still answers 50 MiB), and an agent must not report a `chunk_bytes` over 4,194,304. The client takes both
 from this answer: it refuses a larger file before sending or asking for anything, asks for pieces
 of exactly `chunk_bytes` (the last one shorter), and sends pieces of exactly that size.
 
