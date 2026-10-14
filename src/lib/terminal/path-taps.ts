@@ -28,28 +28,54 @@ const asking = new Map<string, Promise<PathKind | null>>();
 /** False once the Mac has said it cannot stat; taps then behave as they did before paths. */
 let statSupported = true;
 let homeAsked: Promise<void> | null = null;
+let statProbed = false;
+/** True once a terminal has been opened, after which every return of the Mac is prepared for. */
+let wanted = false;
+
+const isUp = () => {
+  const { link, agent } = relay.getSnapshot();
+  return link === "open" && agent?.online === true;
+};
 
 // Another Hako may be on the other end after the Mac has been away.
-let wasUp = false;
+let wasUp = isUp();
 relay.subscribe(() => {
-  const { link, agent } = relay.getSnapshot();
-  const up = link === "open" && agent?.online === true;
+  const up = isUp();
   if (up === wasUp) return;
   wasUp = up;
-  if (up) return;
+  if (up) {
+    if (wanted) prepareForPaths();
+    return;
+  }
   known.clear();
   statSupported = true;
+  statProbed = false;
   homeAsked = null;
 });
 
-/** Asks the Mac for its home directory once, unless the files screen already did. */
-export function learnHome(): Promise<void> {
-  if (homeDirectory() !== null) return Promise.resolve();
+/**
+ * Gets ready for taps on paths: learns the Mac's home directory, and whether it can say what is at
+ * a path (an app from before round 1 cannot, and a first tap would otherwise be lost finding out).
+ * Done again each time the Mac comes back.
+ */
+export function prepareForPaths(): void {
+  wanted = true;
+  if (!isUp()) return;
+  void learnHome();
+  if (statProbed) return;
+  statProbed = true;
+  relay.request("fs.stat", { path: "?" }).catch((error) => {
+    if (!(error instanceof RpcFailure)) return;
+    if (error.code === "not_supported") statSupported = false;
+    else if (error.code !== "bad_request") statProbed = false;
+  });
+}
+
+/** Asks the Mac for its home directory once per connection: another Mac may be on the other end. */
+function learnHome(): Promise<void> {
   homeAsked ??= relay
     .request<FsRootsResult>("fs.roots")
-    .then((roots) => {
-      if (homeDirectory() === null) setHomeDirectory(roots.home ?? null);
-    })
+    .then((roots) => setHomeDirectory(roots.home ?? null))
     .catch(() => {
       homeAsked = null;
     });

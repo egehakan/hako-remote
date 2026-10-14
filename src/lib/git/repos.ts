@@ -267,7 +267,7 @@ export function explainFailure(
     if (code === "conflict") {
       return {
         title: "Conflict markers are still there",
-        hint: "Nothing was committed. Open these files from the merge banner, keep the lines you want and delete the marker lines, then commit the merge.",
+        hint: "Nothing was committed. Open each file below, keep the lines you want and delete the marker lines, then commit the merge.",
       };
     }
     if (/nothing to commit/i.test(output)) return { title: "Nothing to commit", hint: null };

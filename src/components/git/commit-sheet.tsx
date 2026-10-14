@@ -30,6 +30,9 @@ import {
   useRepoStatus,
 } from "@/lib/git/store";
 import { useVisibleViewport } from "@/lib/terminal/viewport";
+import { joinPath } from "@/lib/files/paths";
+import { routes } from "@/lib/route";
+import { parseConflictMarkerMessage } from "@shared/git";
 import { cn } from "@/lib/utils";
 
 type CommitSheetProps = {
@@ -107,6 +110,7 @@ function CommitForm({ repo, onCancel, onCommitted }: CommitFormProps) {
   const canPush = repo.branch !== null;
   const thenPush = canPush && pushAfterCommit;
   const explained = failure ? explainFailure("commit", failure.code, failure.message) : null;
+  const marked = failure?.code === "conflict" ? parseConflictMarkerMessage(failure.message) : null;
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -225,7 +229,27 @@ function CommitForm({ repo, onCancel, onCommitted }: CommitFormProps) {
             <AlertTitle>{explained.title}</AlertTitle>
             <AlertDescription>
               {explained.hint ? <p>{explained.hint}</p> : null}
-              {failure.message ? (
+              {marked ? (
+                <ul className="mt-1 flex flex-col text-foreground" aria-label="Files with markers">
+                  {marked.paths.map((path) => (
+                    <li key={path}>
+                      <a
+                        href={routes.file(joinPath(repo.path, path))}
+                        className="flex min-h-10 items-center gap-2 font-mono text-xs leading-5 [overflow-wrap:anywhere] underline-offset-4 hover:underline"
+                        translate="no"
+                        onClick={onCancel}
+                      >
+                        {path}
+                      </a>
+                    </li>
+                  ))}
+                  {marked.more > 0 ? (
+                    <li className="text-xs leading-5 text-muted-foreground">
+                      and {marked.more} more
+                    </li>
+                  ) : null}
+                </ul>
+              ) : failure.message ? (
                 <pre className="mt-1 max-h-40 overflow-y-auto font-mono text-xs leading-5 [overflow-wrap:anywhere] whitespace-pre-wrap text-foreground">
                   {failure.message}
                 </pre>

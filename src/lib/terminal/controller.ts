@@ -15,7 +15,7 @@ import { fileUrlPath, findPaths } from "./links";
 import {
   findTarget,
   knownTarget,
-  learnHome,
+  prepareForPaths,
   openPath,
   type PathTarget,
   targetsAt,
@@ -108,7 +108,7 @@ export class TerminalController {
 
   start(): void {
     this.session.start();
-    void learnHome();
+    prepareForPaths();
   }
 
   dispose(): void {
