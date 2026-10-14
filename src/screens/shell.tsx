@@ -184,6 +184,7 @@ export function Shell({ email, onLoggedOut }: ShellProps) {
           hiddenOnPhone={
             route.name === "terminal" ||
             route.name === "preview" ||
+            route.name === "browse" ||
             route.name === "file" ||
             route.name === "diff" ||
             route.name === "commitFile"
@@ -293,7 +294,7 @@ export function Shell({ email, onLoggedOut }: ShellProps) {
           route.name === "commit" ||
           route.name === "commitFile" ? (
           <SourceControlArea route={route} />
-        ) : route.name === "previews" || route.name === "preview" ? (
+        ) : route.name === "previews" || route.name === "preview" || route.name === "browse" ? (
           <LoadBoundary>
             <Suspense fallback={<TerminalLoading />}>
               <PreviewsArea route={route} />

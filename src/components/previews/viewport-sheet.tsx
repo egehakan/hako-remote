@@ -1,4 +1,4 @@
-import { CheckIcon, MonitorSmartphoneIcon } from "lucide-react";
+import { CheckIcon, LaptopIcon, MonitorSmartphoneIcon } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -8,6 +8,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import type { ViewerMode } from "@/lib/browser/support";
 import {
   CUSTOM_MAX,
   CUSTOM_MIN,
@@ -25,6 +26,13 @@ type ViewportSheetProps = {
   onChoose: (choice: ViewChoice) => void;
   /** The width the page reports for itself, in CSS pixels, when it has said. */
   pageWidth: number | null;
+  /** Which browser shows the page. Without it the page is in the Mac browser and that is all. */
+  mode?: {
+    value: ViewerMode;
+    onChange: (mode: ViewerMode) => void;
+    /** Null when the Mac browser can be used, else why not. */
+    macUnavailable: string | null;
+  };
 };
 
 const GROUPS: ViewportPreset["group"][] = ["Phones", "Tablets", "Computers"];
@@ -36,6 +44,7 @@ export function ViewportSheet({
   choice,
   onChoose,
   pageWidth,
+  mode,
 }: ViewportSheetProps) {
   const [width, setWidth] = useState(String(choice.custom.width));
   const [height, setHeight] = useState(String(choice.custom.height));
@@ -61,15 +70,34 @@ export function ViewportSheet({
 
         <div className="px-4 pb-3">
           <p className="pb-1.5 text-[0.8125rem] text-muted-foreground">Shown in</p>
-          <div className="flex items-center gap-3 rounded-lg border border-lid/50 bg-secondary px-3 py-2.5">
-            <MonitorSmartphoneIcon className="size-5 shrink-0 text-lid" />
-            <span className="min-w-0 flex-1">
-              <span className="block text-[0.9375rem] leading-5 font-medium">Phone browser</span>
-              <span className="block text-[0.8125rem] leading-5 text-muted-foreground">
-                The page runs in this browser, served by the dev server on your Mac.
-              </span>
-            </span>
-            <CheckIcon className="size-4 text-lid" aria-label="Chosen" />
+          <div className="flex flex-col gap-1.5" role="radiogroup" aria-label="Shown in">
+            <ModeChoice
+              icon={<LaptopIcon className="size-5 shrink-0" />}
+              label="Mac browser"
+              detail={
+                mode?.macUnavailable ??
+                "Chrome on your Mac runs the page against localhost, as you test it there. Slower, and everything works."
+              }
+              chosen={!mode || mode.value === "mac"}
+              disabled={Boolean(mode?.macUnavailable)}
+              onClick={() => {
+                mode?.onChange("mac");
+                onOpenChange(false);
+              }}
+            />
+            {mode ? (
+              <ModeChoice
+                icon={<MonitorSmartphoneIcon className="size-5 shrink-0" />}
+                label="Phone browser"
+                detail="The page runs in this browser, served by the dev server on your Mac. Faster."
+                chosen={mode.value === "phone"}
+                disabled={false}
+                onClick={() => {
+                  mode.onChange("phone");
+                  onOpenChange(false);
+                }}
+              />
+            ) : null}
           </div>
         </div>
 
@@ -133,6 +161,43 @@ export function ViewportSheet({
         </section>
       </SheetContent>
     </Sheet>
+  );
+}
+
+function ModeChoice({
+  icon,
+  label,
+  detail,
+  chosen,
+  disabled,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  detail: string;
+  chosen: boolean;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={chosen}
+      disabled={disabled}
+      onClick={onClick}
+      className={cn(
+        "flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-60",
+        chosen ? "border-lid/50 bg-secondary" : "border-border hover:bg-muted/50",
+      )}
+    >
+      <span className={cn(chosen ? "text-lid" : "text-muted-foreground")}>{icon}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[0.9375rem] leading-5 font-medium">{label}</span>
+        <span className="block text-[0.8125rem] leading-5 text-muted-foreground">{detail}</span>
+      </span>
+      <CheckIcon className={cn("size-4 shrink-0 text-lid", !chosen && "invisible")} />
+    </button>
   );
 }
 

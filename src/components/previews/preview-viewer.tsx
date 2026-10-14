@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { type PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MacOffline } from "@/components/mac-offline";
+import { MacViewer } from "@/components/previews/mac-viewer";
 import { ConsoleSheet, type ConsoleEntry } from "@/components/previews/console-sheet";
 import { StatusDot } from "@/components/previews/preview-list";
 import { ViewportSheet } from "@/components/previews/viewport-sheet";
@@ -34,6 +35,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Spinner } from "@/components/ui/spinner";
+import { readMode, useMacBrowserSupport, type ViewerMode, writeMode } from "@/lib/browser/support";
 import { describeFailure, NEEDS_NEWER_HAKO } from "@/lib/errors";
 import { useConnection } from "@/lib/hooks";
 import { previewTicket, restartPreview, usePreviews } from "@/lib/previews/store";
@@ -182,7 +184,42 @@ export function PreviewViewer({ id }: { id: string }) {
     );
   }
   if (preview.status !== "running") return <NotRunning preview={preview} />;
-  return <RunningViewer key={preview.id} preview={preview} />;
+  return <RunningPreview key={preview.id} preview={preview} />;
+}
+
+/**
+ * A running preview, in the browser chosen for it: Chrome on the Mac (the default), or this
+ * browser through the preview's own address. An app without the Mac browser gets this browser.
+ */
+function RunningPreview({ preview }: { preview: Preview }) {
+  const support = useMacBrowserSupport();
+  const [mode, setModeState] = useState<ViewerMode>(() => readMode(preview.id));
+  const setMode = (next: ViewerMode) => {
+    setModeState(next);
+    writeMode(preview.id, next);
+  };
+  if (mode === "mac" && support !== "no") {
+    return (
+      <MacViewer
+        target={{ previewId: preview.id }}
+        name={preview.name}
+        choiceKey={preview.id}
+        runKey={`${preview.port}:${preview.started}`}
+        mode={{ onChange: setMode }}
+        status={<StatusDot status={preview.status} />}
+      />
+    );
+  }
+  return (
+    <RunningViewer
+      preview={preview}
+      mode={{
+        value: "phone",
+        onChange: setMode,
+        macUnavailable: support === "no" ? NEEDS_NEWER_HAKO : null,
+      }}
+    />
+  );
 }
 
 function ViewerShell({ title, children }: { title: string; children: React.ReactNode }) {
@@ -299,7 +336,13 @@ function NotRunning({ preview }: { preview: Preview }) {
   return <ViewerShell title={preview.name}>{body}</ViewerShell>;
 }
 
-function RunningViewer({ preview }: { preview: Preview }) {
+function RunningViewer({
+  preview,
+  mode,
+}: {
+  preview: Preview;
+  mode: { value: ViewerMode; onChange: (mode: ViewerMode) => void; macUnavailable: string | null };
+}) {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [stage, setStage] = useState<HTMLDivElement | null>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -678,6 +721,7 @@ function RunningViewer({ preview }: { preview: Preview }) {
           setPanning(false);
         }}
         pageWidth={choice.viewport === "fit" ? (page?.width ?? null) : null}
+        mode={mode}
       />
       <ConsoleSheet
         open={consoleOpen}

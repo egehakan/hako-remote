@@ -1,5 +1,6 @@
 import { AppWindowIcon } from "lucide-react";
 import { PreviewList } from "@/components/previews/preview-list";
+import { MacViewer } from "@/components/previews/mac-viewer";
 import { PreviewViewer } from "@/components/previews/preview-viewer";
 import {
   Empty,
@@ -11,7 +12,7 @@ import {
 import type { Route } from "@/lib/route";
 import { cn } from "@/lib/utils";
 
-type PreviewsRoute = Extract<Route, { name: "previews" | "preview" }>;
+type PreviewsRoute = Extract<Route, { name: "previews" | "preview" | "browse" }>;
 
 /**
  * Previews: the apps the Mac runs for the owner to try, and one of them in a frame beside the list
@@ -19,23 +20,27 @@ type PreviewsRoute = Extract<Route, { name: "previews" | "preview" }>;
  */
 export default function PreviewsArea({ route }: { route: PreviewsRoute }) {
   const id = route.name === "preview" ? route.id : null;
+  const open = route.name !== "previews";
   return (
     <>
-      <div
-        className={cn(
-          "flex min-h-0 min-w-0 flex-col narrow:flex-1",
-          id !== null && "narrow:hidden",
-        )}
-      >
+      <div className={cn("flex min-h-0 min-w-0 flex-col narrow:flex-1", open && "narrow:hidden")}>
         <PreviewList selected={id} />
       </div>
       <div
         className={cn(
           "min-h-0 min-w-0 wide:border-l",
-          id !== null ? "narrow:flex-1" : "narrow:hidden",
+          // On a phone an open viewer follows the visible part of the page, above the keyboard.
+          open ? "visible-pane h-(--vv-height) overflow-hidden" : "narrow:hidden",
         )}
       >
-        {id !== null ? (
+        {route.name === "browse" ? (
+          <MacViewer
+            key={route.url}
+            target={{ url: route.url }}
+            name={route.url}
+            choiceKey="@browser"
+          />
+        ) : id !== null ? (
           <PreviewViewer key={id} id={id} />
         ) : (
           <Empty className="h-full">

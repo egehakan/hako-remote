@@ -1,7 +1,9 @@
 import type { Preview } from "@shared/previews";
+import { normalizeAddress } from "@shared/browser";
 import {
   AppWindowIcon,
   CircleAlertIcon,
+  GlobeIcon,
   PlayIcon,
   RefreshCwIcon,
   RotateCwIcon,
@@ -9,7 +11,7 @@ import {
   SquareIcon,
   Trash2Icon,
 } from "lucide-react";
-import { useRef, useState } from "react";
+import { type FormEvent, useId, useRef, useState } from "react";
 import { MacOffline } from "@/components/mac-offline";
 import { Alert, AlertAction, AlertDescription } from "@/components/ui/alert";
 import {
@@ -24,6 +26,15 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import {
   Empty,
   EmptyDescription,
   EmptyHeader,
@@ -32,6 +43,7 @@ import {
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { useMacBrowserSupport } from "@/lib/browser/support";
 import { RpcFailure } from "@/lib/connection";
 import { describeFailure, NEEDS_NEWER_HAKO } from "@/lib/errors";
 import { useConnection } from "@/lib/hooks";
@@ -42,7 +54,7 @@ import {
   stopPreview,
   usePreviews,
 } from "@/lib/previews/store";
-import { routes } from "@/lib/route";
+import { navigate, routes } from "@/lib/route";
 import { cn } from "@/lib/utils";
 
 export const STATUS_LABELS: Record<Preview["status"], string> = {
@@ -97,6 +109,8 @@ export function PreviewList({ selected }: { selected: string | null }) {
   const [notice, setNotice] = useState<string | null>(null);
   const [removing, setRemoving] = useState<Preview | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [addressOpen, setAddressOpen] = useState(false);
+  const macBrowser = useMacBrowserSupport();
   const cancelRef = useRef<HTMLButtonElement>(null);
   const now = Date.now();
 
@@ -123,6 +137,18 @@ export function PreviewList({ selected }: { selected: string | null }) {
           <h1 className="min-w-0 flex-1 truncate py-3.5 text-[1.0625rem] leading-6 font-semibold tracking-[-0.01em]">
             Previews
           </h1>
+          {macBrowser !== "no" ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-11 px-2.5"
+              disabled={offline}
+              onClick={() => setAddressOpen(true)}
+            >
+              <GlobeIcon data-icon="inline-start" />
+              Open URL…
+            </Button>
+          ) : null}
           <Button
             variant="ghost"
             size="icon-touch"
@@ -214,6 +240,8 @@ export function PreviewList({ selected }: { selected: string | null }) {
         )}
       </main>
 
+      <OpenAddressDialog open={addressOpen} onOpenChange={setAddressOpen} />
+
       <AlertDialog open={removing !== null} onOpenChange={(open) => !open && setRemoving(null)}>
         <AlertDialogContent initialFocus={cancelRef}>
           <AlertDialogHeader>
@@ -241,6 +269,79 @@ export function PreviewList({ selected }: { selected: string | null }) {
         </AlertDialogContent>
       </AlertDialog>
     </>
+  );
+}
+
+/** Any address, opened in Chrome on the Mac: a server not run as a preview, or a page elsewhere. */
+function OpenAddressDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const [value, setValue] = useState("");
+  const [problem, setProblem] = useState<string | null>(null);
+  const fieldId = useId();
+  const noteId = useId();
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const url = normalizeAddress(value);
+    if (url === null) {
+      setProblem("That is not an address. Try localhost:3000 or a full https:// address.");
+      return;
+    }
+    onOpenChange(false);
+    setValue("");
+    setProblem(null);
+    navigate(routes.browse(url));
+  };
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <form className="contents" onSubmit={submit}>
+          <DialogHeader>
+            <DialogTitle>Open an address</DialogTitle>
+            <DialogDescription>
+              It opens in Chrome on your Mac, so localhost there works as it does at the Mac.
+            </DialogDescription>
+          </DialogHeader>
+          <label htmlFor={fieldId} className="sr-only">
+            Address
+          </label>
+          <Input
+            id={fieldId}
+            name="address"
+            type="text"
+            inputMode="url"
+            enterKeyHint="go"
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            placeholder="localhost:3000"
+            aria-invalid={problem !== null}
+            aria-describedby={problem ? noteId : undefined}
+            value={value}
+            onChange={(event) => {
+              setValue(event.target.value);
+              setProblem(null);
+            }}
+            className="font-mono"
+          />
+          {problem ? (
+            <p id={noteId} className="text-[0.8125rem] text-destructive">
+              {problem}
+            </p>
+          ) : null}
+          <DialogFooter>
+            <Button type="submit" size="touch" disabled={value.trim() === ""}>
+              Open
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -1,4 +1,4 @@
-import type { PreviewConsoleLevel } from "@shared/previews";
+import type { ConsoleLevel } from "@shared/browser";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -11,7 +11,8 @@ import { cn } from "@/lib/utils";
 
 export type ConsoleEntry = {
   id: number;
-  level: PreviewConsoleLevel;
+  /** The phone browser reports errors and warnings; the Mac browser every level, and requests. */
+  level: ConsoleLevel;
   message: string;
   source: string | null;
   line: number | null;
@@ -37,7 +38,23 @@ type ConsoleSheetProps = {
   /** False while no page has spoken: the page may block the script that listens. */
   scriptPresent: boolean;
   onClear: () => void;
+  /** Says where the entries come from, in place of the phone browser's sentence. */
+  description?: string;
 };
+
+const LEVELS: Record<ConsoleLevel, { label: string; tone: string; border: string }> = {
+  error: { label: "Error", tone: "text-destructive", border: "border-destructive" },
+  network: { label: "Request failed", tone: "text-destructive", border: "border-destructive" },
+  warn: { label: "Warning", tone: "text-amber", border: "border-amber" },
+  info: { label: "Info", tone: "text-remote", border: "border-remote/60" },
+  log: { label: "Log", tone: "text-muted-foreground", border: "border-border" },
+  debug: { label: "Debug", tone: "text-faint", border: "border-border" },
+};
+
+/** Errors and failed requests: what the count on the console button counts. */
+export function isConsoleError(entry: Pick<ConsoleEntry, "level">): boolean {
+  return entry.level === "error" || entry.level === "network";
+}
 
 /** What the page logged as an error or a warning, and what it threw, newest last. */
 export function ConsoleSheet({
@@ -46,6 +63,7 @@ export function ConsoleSheet({
   entries,
   scriptPresent,
   onClear,
+  description,
 }: ConsoleSheetProps) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -56,34 +74,27 @@ export function ConsoleSheet({
         <SheetHeader className="pr-12">
           <SheetTitle>Console</SheetTitle>
           <SheetDescription>
-            {scriptPresent
-              ? "Errors and warnings the page logged, and errors it did not catch. At most 50 each time the page loads."
-              : "Nothing has been heard from this page. A page whose own security policy forbids added scripts cannot report here."}
+            {description ??
+              (scriptPresent
+                ? "Errors and warnings the page logged, and errors it did not catch. At most 50 each time the page loads."
+                : "Nothing has been heard from this page. A page whose own security policy forbids added scripts cannot report here.")}
           </SheetDescription>
         </SheetHeader>
         <div className="min-h-0 flex-1 overflow-y-auto border-y">
           {entries.length === 0 ? (
             <p className="px-4 py-8 text-center text-sm text-muted-foreground">
-              No errors or warnings.
+              {description ? "Nothing logged yet." : "No errors or warnings."}
             </p>
           ) : (
             <ol className="divide-y">
               {entries.map((entry) => (
                 <li
                   key={entry.id}
-                  className={cn(
-                    "border-l-2 px-4 py-2.5",
-                    entry.level === "error" ? "border-destructive" : "border-amber",
-                  )}
+                  className={cn("border-l-2 px-4 py-2.5", LEVELS[entry.level].border)}
                 >
                   <p className="flex items-baseline gap-2 text-[0.75rem]">
-                    <span
-                      className={cn(
-                        "font-medium",
-                        entry.level === "error" ? "text-destructive" : "text-amber",
-                      )}
-                    >
-                      {entry.level === "error" ? "Error" : "Warning"}
+                    <span className={cn("font-medium", LEVELS[entry.level].tone)}>
+                      {LEVELS[entry.level].label}
                     </span>
                     <span className="text-faint">{new Date(entry.at).toLocaleTimeString()}</span>
                   </p>

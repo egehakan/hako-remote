@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { isCommitId, isValidRepoPath } from "../../shared/git.ts";
+import { normalizeAddress } from "../../shared/browser.ts";
 import { isPreviewId } from "../../shared/previews.ts";
 import { decodePath, encodePath } from "./files/paths";
 
@@ -27,6 +28,8 @@ export type Route =
   | { name: "previews" }
   /** One preview, shown in the viewer. */
   | { name: "preview"; id: string }
+  /** Any address, shown in the Mac's browser without a preview. */
+  | { name: "browse"; url: string }
   | { name: "account" };
 
 export type Area = "terminals" | "files" | "git" | "previews" | "account";
@@ -49,6 +52,7 @@ export function areaOf(route: Route): Area {
       return "git";
     case "previews":
     case "preview":
+    case "browse":
       return "previews";
     case "account":
       return "account";
@@ -60,6 +64,15 @@ export function parseRoute(hash: string): Route {
   if (path === "account") return { name: "account" };
   if (path === "git") return { name: "git" };
   if (path === "previews") return { name: "previews" };
+  if (path.startsWith("b?u=")) {
+    let url: string | null = null;
+    try {
+      url = normalizeAddress(decodeURIComponent(path.slice(4)));
+    } catch {
+      // A malformed escape: no address.
+    }
+    return url === null ? { name: "previews" } : { name: "browse", url };
+  }
   if (path.startsWith("p/")) {
     const id = path.slice(2);
     return isPreviewId(id) ? { name: "preview", id } : { name: "previews" };
@@ -159,6 +172,7 @@ export const routes = {
   git: "#/git",
   previews: "#/previews",
   preview: (id: string) => `#/p/${id}`,
+  browse: (url: string) => `#/b?u=${encodeURIComponent(url)}`,
   repo: (repo: string) => `#/git/r${encodePath(repo)}`,
   diff: (repo: string, file: string) => `#/git/r${encodePath(repo)}?f=${encodeURIComponent(file)}`,
   commit: (repo: string, commit: string) => `#/git/r${encodePath(repo)}?c=${commit}`,

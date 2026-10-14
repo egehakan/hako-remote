@@ -80,7 +80,7 @@ export function CopyNotice() {
           <SheetHeader className="px-0 pr-10">
             <SheetTitle>Copy it by hand</SheetTitle>
             <SheetDescription>
-              This browser did not let the page copy. Select the path and copy it.
+              This browser did not let the page copy. Select the text and copy it.
             </SheetDescription>
           </SheetHeader>
           <Input
@@ -90,7 +90,7 @@ export function CopyNotice() {
             autoComplete="off"
             spellCheck={false}
             value={notice?.text ?? ""}
-            aria-label="Path"
+            aria-label="Text to copy"
             className="font-mono text-[0.9375rem]"
             translate="no"
             onFocus={(event) =>
