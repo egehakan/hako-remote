@@ -3,15 +3,16 @@
 A phone-first web app, and the relay server behind it, for seeing and controlling the
 [Hako](https://github.com/egehakan/hako) terminal on your Mac from a browser: which folders and tabs
 are open, what each terminal is running, and whether a coding agent in one of them is working,
-waiting for you or done. You can open a terminal in a folder, bring a tab to the front and close
-one, and add a folder for any directory on the Mac ("New folder" on the Terminals screen picks the
-directory, and can make a new one first). You can use any of those terminals live: a shell, or a
-full-screen program such as Claude Code, with the keys a phone keyboard lacks. You can also browse
-the folders of your projects, read a file with syntax colours, make a small edit and save it, save
-any file to your phone and put files from your phone into a folder on the Mac; you can hand Claude
-Code a picture from your phone in a terminal; and you can see what changed in every repository in
-those folders, read the diffs, and commit, push and pull. And your phone is told when an agent is
-waiting for you or has finished, and when a long command is done.
+waiting for you or done. You can open a terminal in a folder, bring a tab to the front, rename it
+(its ⋯ menu) and close it, rename a folder, and add a folder for any directory on the Mac ("New
+folder" on the Terminals screen picks the directory, and can make a new one first). You can use any
+of those terminals live: a shell, or a full-screen program such as Claude Code, with the keys a
+phone keyboard lacks. You can also browse the folders of your projects, read a file with syntax
+colours, make a small edit and save it, save any file to your phone and put files from your phone
+into a folder on the Mac; you can hand Claude Code a picture from your phone in a terminal; and you
+can see what changed in every repository in those folders, read the diffs, commit, push and pull,
+and merge one branch into another. And your phone is told when an agent is waiting for you or has
+finished, and when a long command is done.
 
 Hako Remote is a companion to [Hako](https://github.com/egehakan/hako), a personal terminal that is
 based on Warp. Neither project is affiliated with, or endorsed by, Warp.
@@ -73,6 +74,19 @@ of the Hako on your Mac. `#/t/<session id>` is its address, so a link can open o
   than 2,576 pixels on its longer side is scaled down to that; any other picture is sent as it is.
   **On the Mac attached pictures are kept in `~/.hako/uploads/<date>/` and deleted after 7 days**,
   not in your project.
+- **Tapping a path.** A path in the output opens in Files: a directory as its list, a file in the
+  viewer, scrolled to the line when a `:line` or `:line:column` follows it. That holds for absolute
+  paths, `~/` paths, paths relative to the terminal's directory, quoted ones with spaces in them,
+  links a program printed as OSC 8 hyperlinks, and the paths in Claude Code's tool lines
+  (`Read(src/app.ts)`, `src/app.ts:12:5`). The Mac is asked first whether something is there, and
+  the path is underlined while it answers; a path that is not there does nothing, and the next tap
+  on it raises the keyboard. The line being typed on is left to the keyboard. With a mouse, paths
+  underline under the pointer and open with a click.
+- **Programs that take the mouse.** While a program reads the mouse, as Claude Code's full-screen
+  mode does, a tap is a click at that spot (so a tap opens a subagent to see what it is doing), and
+  it does not raise the keyboard; the keyboard key on the key bar does. A tap on a path still opens
+  the path. Dragging still scrolls, and holding still selects text. Taps land on the right cell at
+  any zoom, fitted to the phone or not.
 - **Moving around.** Tapping the title lists every terminal on the Mac; swiping the title bar steps
   to the next or the previous one. A tab with several terminals shows them as a row to choose from.
 - **When the link breaks.** If the Mac goes offline or the connection drops, the last screen stays
@@ -177,6 +191,13 @@ detached HEAD is at), how many commits it is ahead and behind, and how many file
   the colours, the changed part of a changed line marked, and a switch between wrapped lines and
   lines that run on sideways. From there you step to the next changed file, open the file in Files,
   or discard its changes. A binary file, and a diff over 1 MB, are named for what they are.
+- **Merging.** In the list of branches each branch other than the current one has Merge, which
+  merges it into the current branch after a question that names both. Git fast-forwards when it
+  can; the result is said in a line ("Fast-forwarded", "Merged", "Already up to date"). When the two
+  sides changed the same lines, git stops at the conflicts and the repository shows a banner,
+  "Merging <branch>: N conflicts", with each file in conflict (tapping one opens it in Files to
+  edit), Abort merge, and Commit merge with git's message filled in. Your Mac refuses to commit
+  while a file in conflict still holds conflict markers, and the files it names open from there.
 - **Committing.** A commit takes every changed file in the repository, as the button on the Mac
   does; there is no choosing among them. The message is written in a sheet that stays above the
   keyboard, and the commit can be pushed straight after.
@@ -248,6 +269,11 @@ it as you. So:
   when you are done; never leave it running.
 - Against a relay on `localhost` the shell is on by default. Against any other relay it is off
   unless you start the mock agent with `MOCK_SHELL=1`. `MOCK_SHELL=0` turns it off everywhere.
+- In it, `show-paths` prints paths of every kind to tap, and `mouse-test` (`scripts/mouse-test.py`)
+  is a full-screen program that reads the mouse and says where each press and release landed, with
+  a list of "agents" that open and close on a tap; `--legacy` and `--x10` try the older mouse
+  reports. `q` leaves it.
+- `MOCK_RENAME=0` leaves out renaming tabs and folders, as a desktop app from before it would.
 - The shell is `zsh` (or `sh`) started by `scripts/pty-helper.py`, a small Python helper that gives
   it a pseudo-terminal without a native Node module. It starts in the mock agent's temporary
   directory, or in `MOCK_SHELL_DIR`, with that directory as its home and a clean environment, so it
@@ -306,8 +332,12 @@ The mock agent prints the path of a script, `teammate-pushes.sh`, that pushes on
 that remote as someone else would. After it a push is rejected until you pull, and a pull is
 refused while `style.css` has changes that are not committed.
 
+- `egehakan.com` also has `copy/title`, which conflicts with `main` when merged into it, and
+  `docs/readme`, which `main` fast-forwards to; `feature/dark-mode` merges with a merge commit and
+  `release/1.0` is already merged.
 - `MOCK_GIT=0` leaves the source control methods out, as a desktop app from before they existed
-  would. `MOCK_GIT_HISTORY=0` leaves out only branches, switching and the graph.
+  would. `MOCK_GIT_HISTORY=0` leaves out only branches, switching and the graph, and
+  `MOCK_GIT_MERGE=0` only merging.
 - `MOCK_GIT_EMPTY=1` answers that there are no repositories.
 - `MOCK_GIT_DELAY_MS=1500` makes every answer slow, and `MOCK_GIT_NETWORK_DELAY_MS=25000` makes a
   push or a pull take longer than the relay waits for an ordinary request.
