@@ -611,6 +611,12 @@ letter case only of the same entry, which is allowed. Renaming `/` or the home d
 - `results`: one entry per source, in order: `{ source, path, error }`. `path` is the new absolute
   path or null; `error` is null or `{ code, message }` with the usual codes. Items are
   independent: one failing item never undoes others.
+- A malformed path among `sources` (or among the `paths` of `fs.trash`) fails only that item, with
+  `bad_request`; the request as a whole is `bad_request` only when the list itself is missing,
+  empty or longer than 500.
+- A move between volumes that copied an item but could not remove the original answers with BOTH
+  `path` (the copy) and `error` (why the original is still there) for that item. The client says
+  "copied, but the original could not be removed: <message>".
 - Copying an item into its own directory with `"fail"` gives `conflict` for that item; with
   `"rename"` it makes a copy with a `(2)` name (this is how the client offers Duplicate).
 - Copying or moving a directory into itself or one of its descendants is `bad_request` for that
@@ -630,6 +636,8 @@ Where the contract left room:
 - Copying an item into its own directory with `"replace"` would replace the item with itself; it is
   a `conflict` for that item and nothing changes. The client never asks for it: it copies into the
   same directory only with `"rename"`.
+- The paths that may not go to the Trash (`/`, the home directory, a tab folder's own directory)
+  are refused item by item, like any other failing item.
 
 #### `fs.trash`
 
@@ -673,6 +681,12 @@ Where the contract left room:
   `limit`). A corrupt archive is `failed` with the reason. On any failure the new directory is
   removed. `__MACOSX` folders and `.DS_Store` files are skipped.
 - `timeout_ms: 300000` from the client, 240 seconds on the desktop as above.
+- If every entry in the zip lies under one top-level directory (ignoring skipped `__MACOSX` and
+  `.DS_Store` entries), the CONTENTS of that directory go directly into the new directory, and the
+  new directory is named after that top-level directory rather than after the zip (keep-both naming
+  as before). Otherwise behaviour is unchanged. So a zip made by `fs.archive` of folder `photos`
+  extracts to `photos` (or `photos (2)`), never `photos/photos`. (Decided after round 1 was first
+  written; an app that predates it extracts such a zip to `photos/photos`.)
 
 #### `too_large` with `limit`
 
