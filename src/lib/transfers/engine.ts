@@ -56,7 +56,11 @@ export type UploadRequest = {
   onConflict: UploadConflictChoice;
 };
 
-export type Downloaded = { parts: Uint8Array[]; size: number; mtime: number };
+/**
+ * A finished download. Each piece becomes a Blob as soon as it arrives and its bytes are let go,
+ * so a large file is held once, by the browser, and never also as base64 or as a copy.
+ */
+export type Downloaded = { blob: Blob; size: number; mtime: number };
 
 /** A lost connection is waited out; a Mac that keeps silent is asked this many times in all. */
 const TIMEOUT_TRIES = 3;
@@ -131,7 +135,7 @@ async function ask<T>(
  */
 export async function download(hooks: TransferHooks, path: string): Promise<Downloaded> {
   const { maxBytes, chunkBytes } = hooks.limits;
-  const parts: Uint8Array[] = [];
+  const parts: Blob[] = [];
   let size: number | null = null;
   let mtime: number | null = null;
   let offset = 0;
@@ -172,11 +176,11 @@ export async function download(hooks: TransferHooks, path: string): Promise<Down
     if (bytes.length !== pieceLength(offset, size, chunkBytes)) {
       throw new TransferFailure("failed", "Your Mac sent a piece of the wrong length");
     }
-    parts.push(bytes);
+    parts.push(new Blob([bytes as BlobPart]));
     offset += bytes.length;
     hooks.onProgress(offset, size);
   } while (offset < size);
-  return { parts, size, mtime: mtime ?? 0 };
+  return { blob: new Blob(parts), size, mtime: mtime ?? 0 };
 }
 
 /**

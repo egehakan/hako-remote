@@ -16,6 +16,9 @@ export async function handOver(id: number): Promise<void> {
   }
 }
 
+/** Downloads larger than this wait for the owner to see their size and say yes. */
+export const LARGE_DOWNLOAD_BYTES = 50 * 1024 * 1024;
+
 /** Fetches a file from the Mac and hands it to this device. `size` is what the listing said. */
 export function saveToDevice(path: string, name: string, size: number | null): void {
   transfers.addDownload({
@@ -23,6 +26,7 @@ export function saveToDevice(path: string, name: string, size: number | null): v
     path,
     name,
     size,
+    askFirst: size !== null && size > LARGE_DOWNLOAD_BYTES,
     onDone: (transfer) => void handOver(transfer.id),
   });
 }

@@ -35,7 +35,7 @@ export function mediaTypeOf(name: string): string {
 }
 
 export function fileFrom(downloaded: Downloaded, name: string): File {
-  return new File(downloaded.parts as BlobPart[], name, {
+  return new File([downloaded.blob], name, {
     type: mediaTypeOf(name),
     lastModified: downloaded.mtime > 0 ? downloaded.mtime : Date.now(),
   });

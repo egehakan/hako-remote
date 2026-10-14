@@ -16,6 +16,8 @@ import {
 } from "./engine.ts";
 
 export type TransferState =
+  /** A large download that waits for the owner to say yes, having seen its size. */
+  | "confirm"
   | "queued"
   | "running"
   /** The Mac cannot be reached. The transfer goes on by itself when it can. */
@@ -64,6 +66,8 @@ type DownloadOrder = {
   name: string;
   /** What the folder's listing said, when there was one to say it. */
   size?: number | null;
+  /** True to wait in "confirm" until the owner has seen the size and said yes. */
+  askFirst?: boolean;
   onDone?: (transfer: Transfer) => void;
 };
 
@@ -105,6 +109,7 @@ export class TransferQueue {
       { group: order.group, direction: "download", name: order.name, total: size },
       { work: { kind: "download", path: order.path }, onDone: order.onDone, controller: null },
       size,
+      order.askFirst === true,
     );
   }
 
@@ -120,6 +125,14 @@ export class TransferQueue {
       { work: { kind: "upload", request }, onDone: order.onDone, controller: null },
       order.source.size,
     );
+  }
+
+  /** The owner's yes for a large download that waited to be confirmed. */
+  confirm(id: number): void {
+    const item = this.get(id);
+    if (!item || item.state !== "confirm") return;
+    this.update(id, { state: "queued" });
+    this.pump(item.group);
   }
 
   /** Stops a transfer wherever it is. A finished one stays finished. */
@@ -178,6 +191,7 @@ export class TransferQueue {
     described: Pick<Transfer, "group" | "direction" | "name" | "total">,
     job: Job,
     size: number | null,
+    askFirst = false,
   ): number {
     const id = this.nextId++;
     const { maxBytes } = this.deps.limits();
@@ -190,7 +204,7 @@ export class TransferQueue {
         ...described,
         id,
         moved: 0,
-        state: tooLarge ? "failed" : "queued",
+        state: tooLarge ? "failed" : askFirst ? "confirm" : "queued",
         error: tooLarge ? { code: "too_large", message: "" } : null,
         uploaded: null,
         downloaded: null,

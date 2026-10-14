@@ -25,7 +25,7 @@ import { type Transfer, TransferQueue } from "../src/lib/transfers/queue.ts";
 const LIMITS = { maxBytes: 40, chunkBytes: 4 };
 
 const bytesOf = (text: string) => new TextEncoder().encode(text);
-const textOf = (parts: Uint8Array[]) => Buffer.concat(parts).toString("utf8");
+const textOf = (blob: Blob | undefined) => (blob ? blob.text() : Promise.resolve(""));
 const failure = (code: string, message = code) => Object.assign(new Error(message), { code });
 
 function sourceOf(text: string): UploadSource {
@@ -217,7 +217,7 @@ test("a download asks for the pieces in order and reports each one", async () =>
   const mac = fakeMac({ "/a.txt": "0123456789" });
   const { hooks, progress } = hooksFor(mac);
   const result = await download(hooks, "/a.txt");
-  assert.equal(textOf(result.parts), "0123456789");
+  assert.equal(await textOf(result.blob), "0123456789");
   assert.deepEqual(progress, [4, 8, 10]);
   assert.deepEqual(
     mac.calls.map((call) => [call.params.offset, call.params.length, call.params.expected_size]),
@@ -448,7 +448,7 @@ test("a file that is too large fails as it is added, and a changed download can 
   change = false;
   queue.retry(id);
   const done = await until(id, "done");
-  assert.equal(textOf(done.downloaded?.parts ?? []), "abcdefghij");
+  assert.equal(await textOf(done.downloaded?.blob), "abcdefghij");
   queue.dismiss(id);
   assert.equal(queue.get(id), null);
 });
