@@ -1742,8 +1742,9 @@ server over byte streams on the agent's WebSocket.
 
 - With the app at `https://hako.example.com`, previews live under the **preview domain**
   `hako.example.com`: the relay's `PREVIEW_DOMAIN`, or the host name of the first `PUBLIC_ORIGIN`
-  when that is not set. Preview origins have the app's scheme and port. A `PUBLIC_ORIGIN` whose
-  host is an IP address means no previews.
+  when that is not set. It must be that host or a domain under it (the relay refuses to start
+  otherwise), since the preview cookie is set for all of it. Preview origins have the app's scheme
+  and port. A `PUBLIC_ORIGIN` whose host is an IP address means no previews.
 - The preview `myapp` is served at `https://myapp.hako.example.com` (its **main port**), and each
   of its other ports `P` at `https://myapp--P.hako.example.com`. `myapp--<main port>` is not an
   origin of it; the main port has its own name only.
@@ -1789,7 +1790,9 @@ cookie.
   login session, not to a preview. Its value is `<session hash>.<expiry in ms, base 36>.<HMAC>`,
   signed with a key derived from `HAKO_SESSION_SECRET` that signs nothing else. It is refused when
   it is forged, expired (12 hours), or when its session has ended (logout, password change,
-  expiry), and the WebSockets a session opened to previews are closed when it ends.
+  expiry), and the responses still streaming and the WebSockets of a session are closed when it
+  ends. Every preview cookie a request carries is tried, so one a preview set itself with a longer
+  path, which the browser sends first, does not lock the owner out.
 - Every other request to a preview origin without a valid preview cookie gets `401` with a small
   HTML page "Open this preview from Hako", and so does a WebSocket handshake. The preview cookie is
   removed from the `Cookie` header of every request passed to a dev server.
