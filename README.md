@@ -11,8 +11,10 @@ phone keyboard lacks. You can also browse the folders of your projects, read a f
 colours, make a small edit and save it, save any file to your phone and put files from your phone
 into a folder on the Mac; you can hand Claude Code a picture from your phone in a terminal; and you
 can see what changed in every repository in those folders, read the diffs, commit, push and pull,
-and merge one branch into another. And your phone is told when an agent is waiting for you or has
-finished, and when a long command is done.
+and merge one branch into another. You can try the web app Claude Code just changed, served by its
+dev server on the Mac, inside this app at the size of any phone, tablet or computer. And your phone
+is told when an agent is waiting for you or has finished, when a long command is done, and when a
+preview is ready.
 
 Hako Remote is a companion to [Hako](https://github.com/egehakan/hako), a personal terminal that is
 based on Warp. Neither project is affiliated with, or endorsed by, Warp.
@@ -32,7 +34,9 @@ number of browsers. It does not understand what it carries. A request goes to th
 rewritten id and the answer goes back to the browser that asked; events from the agent fan out to
 every browser; terminal output goes only to the browsers subscribed to that terminal. Because it
 forwards any method name untouched, new features on the Mac need no change here. The one thing it
-reads is a notification, which it sends on to your devices as a push message.
+reads is a notification, which it sends on to your devices as a push message. It also serves each
+preview on an address of its own and carries its HTTP and WebSockets to the dev server on the Mac
+over the same connection.
 
 The **client** is the web app, built to be added to an iPhone home screen. It logs in with an email
 and password, holds one WebSocket to the relay, and redraws when the Mac says the workspace changed.
@@ -218,6 +222,35 @@ comes back to the foreground, and so are the branches and the graph. A Hako that
 these methods yet answers `not_supported`, and Source control says to update it; one that has them
 but not branches and the graph yet says so in their place, and the rest works as before.
 
+## Previews
+
+When Claude Code on the Mac starts the app it changed (the `preview` skill does this in a Hako
+tab), the app appears under **Previews**: its name, its folder, its ports and whether it runs, with
+Stop, Restart, Remove and "Show logs", which opens the tab its dev server prints to. Open shows it
+in this browser ("Phone browser"), served by the dev server on the Mac:
+
+- **A browser's controls.** Back, forward, reload, and the address, which you can tap to go to
+  another path. The triangle counts the errors and warnings the page logged, and opens them.
+- **Viewport.** Fit fills the screen. A phone (iPhone SE, iPhone 15/16, iPhone 16 Pro Max, Pixel 8),
+  a tablet (iPad mini, iPad Air), a computer (1280×800, 1440×900, 1920×1080) or a size of your own
+  shows the page exactly as wide as that device, scaled down to fit; rotate swaps the sides, zoom
+  enlarges it, and the hand lets you drag it around. The choice is remembered for each preview.
+- **Open on its own** opens the preview in a tab of its own (a Safari page from the home-screen
+  app).
+- **Like on the Mac.** Each preview has its own address, `https://<name>.<your domain>`, and each
+  other port of it its own, `https://<name>--<port>.<your domain>`. The dev server sees requests
+  addressed to `localhost`, so a frontend on one port that calls its API on another by
+  `http://localhost:<port>` works unchanged: the relay and a small script it puts into every page
+  translate those addresses both ways. Hot reload works, and so do WebSockets, server-sent events,
+  cookies, redirects and downloads.
+- **Only for you.** A preview opens only from the app: the app asks the relay for a one-time link,
+  which gives this browser a preview cookie for 12 hours, bound to your login. Anyone else gets
+  "Open this preview from Hako".
+
+The relay needs a wildcard DNS name and certificate for this: `*.<your domain>` pointing at the
+same service as `<your domain>` (see [Deploy](#deploy-to-railway)). A Hako without previews shows
+"update Hako on your Mac".
+
 ## Notifications on iPhone
 
 Hako on your Mac can tell your phone when a coding agent such as Claude Code is waiting for you (a
@@ -259,6 +292,12 @@ pnpm mock-agent             # in a second terminal
 
 Open http://localhost:8787 and log in with `HAKO_OWNER_EMAIL` and `HAKO_INITIAL_PASSWORD`. Stop the
 mock agent and the page shows the Mac as offline; start it and the workspace comes back.
+
+To try previews in the app's frame, give the relay a name under `localhost` with
+`PUBLIC_ORIGIN=http://hako.localhost:8787` and open http://hako.localhost:8787: previews are then at
+`http://<name>.hako.localhost:8787`, which browsers resolve without DNS. (With plain `localhost`,
+Chrome counts `<name>.localhost` as another site, so the app's frame would not carry the preview
+cookie.)
 
 For work on the web app, run `pnpm dev:server` and `pnpm dev` instead and open
 http://localhost:5173. Vite proxies `/api` and `/ws` to the relay.
@@ -351,6 +390,31 @@ refused while `style.css` has changes that are not committed.
   `MOCK_GIT_SWITCH_DELAY_MS=65000` makes a switch of branch outlast the minute the app waits for
   one, after which it says that the switch is still going on and reads the repository when it ends.
 
+### The mock agent's previews
+
+The mock agent runs real dev servers as previews, each in a tab of its own that shows what it
+prints (Ctrl+C there stops it), and stops them when it stops. Two are always there: "Demo site",
+which tries a WebSocket, server-sent events, a redirect to its own `localhost` address, a cookie for
+`Domain=localhost`, a page that refuses to be framed and logs an error, its request headers and a
+large download (`/big?mb=50`), and "Web and API", a page on one port that calls its API on another
+by `http://localhost:<port>`, with credentials, an image and a WebSocket. To add your own, such as
+a Vite or Next.js app, list them in a JSON file and name it in `MOCK_PREVIEWS`:
+
+```json
+[
+  {
+    "id": "vite",
+    "name": "Vite app",
+    "directory": "/path/to/app",
+    "command": "./node_modules/.bin/vite --port {port} --strictPort",
+    "port": 5199
+  }
+]
+```
+
+`ports` (`[{ "port", "label" }]`) adds more ports, `url_path` the path to open first.
+`MOCK_PREVIEWS_OFF=1` leaves previews out, as a Hako without them would.
+
 ### The mock agent's notifications
 
 The mock agent sends a `notify` event when asked. In the terminal it runs in, press `w` (an agent
@@ -382,6 +446,7 @@ Two more things help when working on the terminal:
 | `HAKO_INITIAL_PASSWORD` | Used once, to create the account when the database is empty. Changing it later does nothing; change the password in the app.                                                                                                                        |
 | `HAKO_AGENT_KEY`        | The key the desktop app sends as `Authorization: Bearer …` on `/ws/agent`. At least 24 characters.                                                                                                                                                  |
 | `HAKO_SESSION_SECRET`   | Signs session cookies. At least 24 characters. Changing it logs every device out.                                                                                                                                                                   |
+| `PREVIEW_DOMAIN`        | Optional. The domain previews are served under, as `<name>.<domain>`. Defaults to the host of the first `PUBLIC_ORIGIN`; an IP address there means no previews.                                                                                     |
 | `PUBLIC_ORIGIN`         | The origin the app is served from, such as `https://hako.example.com`. Requests and WebSockets from any other origin are refused. Several origins can be given, separated by commas. Cookies are marked `Secure` when every origin is HTTPS.        |
 | `DATA_DIR`              | Where `hako.db` lives. Defaults to `./.data`.                                                                                                                                                                                                       |
 | `PORT`                  | Defaults to `8787`.                                                                                                                                                                                                                                 |
@@ -400,7 +465,8 @@ Railway builds the `Dockerfile` in this repository.
    set to the public URL you will use.
 3. In the service settings, set the health check path to `/api/health`.
 4. Deploy, either with `railway up` from this folder or by connecting the GitHub repository.
-5. Add your domain to the service, on port 8787, and create the DNS records Railway asks for.
+5. Add your domain to the service, on port 8787, and create the DNS records Railway asks for. For
+   previews, add the wildcard `*.<your domain>` the same way; Railway issues a certificate for it.
 
 Run exactly one replica: the relay holds the agent connection and the SQLite file in one process.
 
@@ -421,6 +487,11 @@ What stands in the way:
   Changing the password ends every other session.
 - `/ws/client` needs a valid session and an `Origin` header equal to `PUBLIC_ORIGIN`; `/ws/agent`
   needs the agent key, compared in constant time.
+- Previews are served on origins of their own, never on the app's, so a page under development
+  cannot reach the app's API or read its cookie: the session cookie is `__Host-` and host-only,
+  and a request from a preview to `/api` fails the `Origin` check. A preview opens only with a
+  one-time ticket from a logged-in app, which buys a signed preview cookie bound to that login;
+  logging out ends it. Only the app may frame a preview.
 
 The mock agent is a development tool with a real shell behind it (see above). Do not connect it
 to a relay that is reachable from the internet for longer than a test takes.
@@ -439,6 +510,9 @@ What does not:
   be read on a locked phone. The relay stores, for each device, the address and the keys the
   browser gave it for this, until that device logs out.
 - A stolen, unlocked phone with the app open is a terminal on your Mac.
+- **A preview is a dev server on your Mac, reachable from the internet** by whoever holds your
+  login. Like localhost on the Mac, all previews share one cookie domain, so one preview's pages
+  can set cookies the others receive.
 
 So use a long password that you use nowhere else, keep the agent key and the session secret out of
 the repository, and host the relay somewhere you trust. If you do not need remote access for a

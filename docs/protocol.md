@@ -8,8 +8,10 @@ Three parties:
 
 The relay does not interpret workspace, file or git data. It routes requests to the agent, routes
 responses back to the client that asked, and fans events out to clients. It forwards any method name
-without knowing it; the only methods it reads are `app.info` (which it calls itself, see
-[Relay events](#relay-events)) and `term.subscribe` / `term.unsubscribe` (to route terminal output).
+without knowing it; the only methods it reads are `app.info` and `preview.list` (which it calls
+itself, see [Relay events](#relay-events) and [Previews](#previews-round-4)) and `term.subscribe` /
+`term.unsubscribe` (to route terminal output). It also serves the previews' own origins, which it
+tunnels to the Mac over byte streams ([Previews](#previews-round-4)).
 
 ## Connections
 
@@ -58,6 +60,7 @@ A text or binary frame larger than 8 MB closes the connection.
 | `POST /api/push/settings` | `{ muted?, kinds? }` | `Device`. Changes what this device is sent. |
 | `POST /api/push/unsubscribe` | | `{ ok: true }`. Forgets this session's subscription. |
 | `POST /api/push/test` | | `{ ok: true }` once the push service has taken a test notification for this device. |
+| `POST /api/previews/ticket` | `{ id, path? }` | `{ url }`: a one-time address that lets this browser into a preview. See [Previews](#previews-round-4). |
 
 Bodies are JSON. A `POST` whose `Origin` header is not the app's own origin gets `403`. Errors are
 `{ error, ... }` with these statuses:
@@ -77,7 +80,8 @@ HTTPS (local development) the cookie is set without `Secure`.
 
 ## Frames
 
-Text frames are JSON. Binary frames carry terminal output only.
+Text frames are JSON. Binary frames carry terminal output (type `0x01`, below) and, between the
+relay and the agent only, the data of [byte streams](#byte-streams) (type `0x02`).
 
 ```jsonc
 // request: client -> relay -> agent
@@ -1516,7 +1520,7 @@ notifications, where a tap opens that terminal.
 
 | Field | Type | Meaning and limits |
 |---|---|---|
-| `kind` | string | `agent_waiting`, `agent_done` or `command_done`. Required. |
+| `kind` | string | `agent_waiting`, `agent_done`, `command_done` or `preview_ready` ([Previews](#event-notify-kind-preview_ready)). Required. |
 | `title` | string | One line of plain text, at most 100 characters. Required, and not empty. |
 | `body` | string | Plain text of at most 300 characters, which may hold line breaks (`LF`). May be `""`; a missing `body` counts as `""`. |
 | `session_id` | string | The terminal the notification is about: the `session_id` of its pane in `workspace.list`. Required, 1 to 255 bytes in UTF-8. |
@@ -1544,8 +1548,8 @@ notification:
   300 characters is cut to its first 299 and `…`.
 
 A `notify` is **dropped**, with a line in the relay's log, when its `data` is not an object, when
-`kind` is none of the three, when `session_id` is missing, not a string, empty or longer than 255
-bytes, or when `title` is not a string or is empty once cleaned. A `tab_id` that is not a string of
+`kind` is none of the four, when `session_id` is missing, not a string, empty or longer than 255
+bytes (`preview_ready` excepted, see [Previews](#event-notify-kind-preview_ready)), or when `title` is not a string or is empty once cleaned. A `tab_id` that is not a string of
 1 to 255 bytes is read as `null`. So a newer desktop app may send a kind this relay does not know,
 and nothing happens.
 
@@ -1652,12 +1656,13 @@ The decrypted payload is JSON:
 ```ts
 type PushPayload = {
   v: 1;
-  kind: "agent_waiting" | "agent_done" | "command_done" | "test";
+  kind: "agent_waiting" | "agent_done" | "command_done" | "preview_ready" | "test";
   title: string;
   body: string;
   session_id: string | null;   // null for a test
   tab_id: string | null;
-  tag: string;                 // "hako:" + session_id, or "hako:test"
+  preview_id?: string;         // preview_ready only
+  tag: string;                 // "hako:" + session_id, "hako:preview:" + preview_id, or "hako:test"
 };
 ```
 
@@ -1678,7 +1683,12 @@ push subscription for each login session. All six routes need the session cookie
 one) and, being under `/api`, a `POST` must come from the app's own origin (`403` otherwise).
 
 ```ts
-type Kinds = { agent_waiting: boolean; agent_done: boolean; command_done: boolean };
+type Kinds = {
+  agent_waiting: boolean;
+  agent_done: boolean;
+  command_done: boolean;
+  preview_ready: boolean;
+};
 type Device =
   | { subscribed: false }
   | { subscribed: true; endpoint_id: string; muted: boolean; kinds: Kinds };
@@ -1692,7 +1702,7 @@ back.
 |---|---|
 | `GET /api/push/key` | `{ key }`: the VAPID public key, an uncompressed P-256 point in base64url without padding, which the client passes to `PushManager.subscribe` as `applicationServerKey`. |
 | `GET /api/push/device` | The `Device` of this session. |
-| `POST /api/push/subscribe` | Body: what `PushSubscription.toJSON()` gives, `{ endpoint, keys: { p256dh, auth } }`, with the optional `muted` (boolean) and `kinds` (any of the three, booleans) beside them. Stores it for this session in place of whatever the session had, and answers with the `Device`. With neither `muted` nor `kinds` the session's earlier preferences are kept; a first subscription starts unmuted with every kind on, and a kind left out of `kinds` is on. `endpoint` must be an `https:` address of at most 2,048 characters without a user name, `p256dh` must decode to 65 bytes that start with `0x04`, and `auth` to 16 bytes; anything else is `400 bad_request`. (A relay that is itself served without TLS, which is a development setup, also takes `http://localhost` and `http://127.0.0.1`.) |
+| `POST /api/push/subscribe` | Body: what `PushSubscription.toJSON()` gives, `{ endpoint, keys: { p256dh, auth } }`, with the optional `muted` (boolean) and `kinds` (any of the four, booleans) beside them. Stores it for this session in place of whatever the session had, and answers with the `Device`. With neither `muted` nor `kinds` the session's earlier preferences are kept; a first subscription starts unmuted with every kind on, and a kind left out of `kinds` is on. `endpoint` must be an `https:` address of at most 2,048 characters without a user name, `p256dh` must decode to 65 bytes that start with `0x04`, and `auth` to 16 bytes; anything else is `400 bad_request`. (A relay that is itself served without TLS, which is a development setup, also takes `http://localhost` and `http://127.0.0.1`.) |
 | `POST /api/push/settings` | Body: `{ muted?, kinds? }`. Changes the fields that are given and answers with the `Device`. `404 not_subscribed` when the session has no subscription; `400 bad_request` for a value that is not a boolean. |
 | `POST /api/push/unsubscribe` | Removes this session's subscription, if any. `{ ok: true }`. |
 | `POST /api/push/test` | Sends this device, and no other, a notification with `kind: "test"`, also when it is muted, and waits for the push service. `{ ok: true }` when the push service took it. `404 { error: "not_subscribed" }` without a subscription. `410 { error: "gone" }` when the push service said the subscription no longer exists, which has also removed it. `502 { error: "push_failed", status, reason }` for any other refusal, with the push service's status and the start of what it answered, or with `status: null` when it could not be reached. |
@@ -1719,6 +1729,267 @@ that its browser's subscription was made for another key and replaces it.
   the device is muted, has the kind off, or is already showing that terminal. The system's
   notification arrives as well.
 - Logging out removes the relay's copy and then ends the browser's subscription.
+
+### Previews (round 4)
+
+A preview is a web app the desktop app runs for the owner, usually a dev server that Claude Code
+started in a Hako tab. The owner opens it on the phone, inside the web app, as if on the Mac. The
+desktop app keeps the list of previews and opens TCP connections to their ports on request; the
+relay gives every port of every preview its own origin and passes HTTP and WebSockets to the dev
+server over byte streams on the agent's WebSocket.
+
+#### Addresses
+
+- With the app at `https://hako.example.com`, previews live under the **preview domain**
+  `hako.example.com`: the relay's `PREVIEW_DOMAIN`, or the host name of the first `PUBLIC_ORIGIN`
+  when that is not set. Preview origins have the app's scheme and port. A `PUBLIC_ORIGIN` whose
+  host is an IP address means no previews.
+- The preview `myapp` is served at `https://myapp.hako.example.com` (its **main port**), and each
+  of its other ports `P` at `https://myapp--P.hako.example.com`. `myapp--<main port>` is not an
+  origin of it; the main port has its own name only.
+- A preview id is 1 to 40 characters of `[a-z0-9-]`, does not start or end with `-`, does not
+  contain `--`, and is none of `www`, `api`, `app`, `admin`, `relay`, `hako`, `mail`, `static`,
+  `assets`.
+- A request whose `Host` is under the preview domain never reaches the app's own routes (`/api/*`,
+  `/ws/*`, the web app), and a request for the app never reaches a preview. The relay reads the
+  first label of `Host` (port and case ignored); a label that is not `<id>` or `<id>--<port>` with
+  a valid id and a port of 1 to 65535 gets the 404 page "No preview called <label>".
+- On one computer, use the `.localhost` names browsers resolve to 127.0.0.1 without DNS:
+  `PUBLIC_ORIGIN=http://hako.localhost:8787` puts previews at `http://myapp.hako.localhost:8787`.
+  Use a domain under `localhost`, not `localhost` itself: Chrome treats `myapp.localhost` and
+  `localhost` as different sites, so the app's frame would not carry the preview cookie, and it
+  takes no cookie for `Domain=localhost`.
+
+#### Who can open a preview
+
+Only the owner, and only from the app: preview origins never receive or read the login session
+cookie.
+
+- The session cookie is `__Host-hako_session` (Secure, host-only, `Path=/`, HttpOnly,
+  SameSite=Lax) when every `PUBLIC_ORIGIN` is HTTPS, and `hako_session` without `Secure`
+  otherwise. Being host-only it never reaches a preview origin, and the `__Host-` prefix keeps a
+  preview from setting or replacing it for the app. A relay served over HTTPS reads that name only;
+  `hako_session` is read only over plain HTTP.
+- `POST /api/previews/ticket` `{ id, path? }`, with the session cookie and the app's `Origin` like
+  every `POST` under `/api`, answers `{ url }`:
+  `https://<id>.hako.example.com/__hako/auth?t=<ticket>&next=<path>`. `path` is where to go once
+  in, a path on the preview's own origin (starting with one `/`, no backslash or control
+  character, at most 2,048 characters), `/` when left out. `400 bad_request` for an id or a path
+  that is not valid, `401` without a session, `404 { error: "previews_off" }` on a relay without a
+  preview domain. The relay does not ask the Mac whether the preview exists.
+- A ticket is 32 random bytes (base64url), good for one use within 60 seconds, for that preview
+  only, and bound to the login session that asked for it. The relay keeps tickets in memory only.
+- `GET /__hako/auth?t=<ticket>&next=<path>` on the preview's origin uses up the ticket (also when
+  it is shown at another preview, which then refuses it) and, when it is valid and its session
+  still live, answers `303` to `next` (`/` when `next` is not a valid path) with the **preview
+  cookie**: `__Secure-hako_preview=<value>; Domain=hako.example.com; Path=/; Max-Age=43200;
+  HttpOnly; SameSite=Lax; Secure`. Over plain HTTP its name is `hako_preview`, without `Secure`.
+  Otherwise it answers the 401 page.
+- The preview cookie covers every preview origin, of every preview: it is bound to the owner's
+  login session, not to a preview. Its value is `<session hash>.<expiry in ms, base 36>.<HMAC>`,
+  signed with a key derived from `HAKO_SESSION_SECRET` that signs nothing else. It is refused when
+  it is forged, expired (12 hours), or when its session has ended (logout, password change,
+  expiry), and the WebSockets a session opened to previews are closed when it ends.
+- Every other request to a preview origin without a valid preview cookie gets `401` with a small
+  HTML page "Open this preview from Hako", and so does a WebSocket handshake. The preview cookie is
+  removed from the `Cookie` header of every request passed to a dev server.
+
+#### The registry
+
+```ts
+type Preview = {
+  id: string;
+  name: string;              // for the owner: "Web app"
+  directory: string;         // absolute
+  repo: string | null;       // the git working tree, or null
+  port: number;              // the main port
+  ports: { port: number; label: string }[];  // every port the browser may need, the main one included
+  command: string | null;    // the dev command, or null for a server attached while running
+  tab_id: string | null;     // the Hako tab running it
+  session_id: string | null; // that tab's terminal
+  status: "starting" | "running" | "stopped" | "failed";
+  message: string | null;    // a short sentence for failed and stopped
+  started: number;           // ms
+  url_path: string;          // the path to open first, "/" by default
+};
+```
+
+| Method | Params | Result |
+|---|---|---|
+| `preview.list` | `{}` | `{ previews }`, newest first. |
+| `preview.stop` | `{ id }` | `{}`. Sends Ctrl+C to the preview's tab, which stays open with its output; the status becomes `stopped` when the port stops answering or the process exits. |
+| `preview.restart` | `{ id }` | `{}`. Stops it as above if it runs, then runs the command again in the same tab, or in a new one when that tab was closed. |
+| `preview.remove` | `{ id }` | `{}`. Stops it, forgets it and closes its tab. |
+
+`not_found` for an id the app does not have. An app without previews answers `not_supported`;
+`preview.list` is the probe. The client asks the last two with `timeout_ms` of 60,000.
+
+Event `previews.changed` `{}` whenever the list or a status changes, at most twice a second. The
+relay passes it on to clients like any event, and reads the list again itself.
+
+The relay calls `preview.list` too (with a `relay:` id): when the agent has been announced, after
+each `previews.changed`, and when asked for a preview it does not know, at most every 2 seconds. It
+uses the answer for the port numbers, and to tell an unknown preview (404) from a stopped one
+(503). An answer of `not_supported` is an empty list.
+
+#### Byte streams
+
+A stream is one TCP connection the Mac makes to one port of a preview, for the relay. Its messages
+travel on the agent's WebSocket beside the others; they are not requests, have no ids to rewrite
+and no timeouts of the request kind.
+
+```jsonc
+// relay -> agent: connect to 127.0.0.1:<port>, or [::1]:<port> when IPv4 is refused
+{ "t": "sopen", "sid": 7, "preview": "myapp", "port": 8087 }
+// agent -> relay: connected
+{ "t": "sopened", "sid": 7 }
+// either way: no more data from me on this stream
+{ "t": "sclose", "sid": 7 }
+// either way: the stream failed and is gone
+{ "t": "sclose", "sid": 7, "error": { "code": "failed", "message": "connect ECONNREFUSED" } }
+// either way: I have passed on this many more bytes of yours
+{ "t": "sack", "sid": 7, "bytes": 65536 }
+```
+
+- `port` must be one of the preview's `ports`. The agent refuses with `sclose` and `error.code`
+  `not_found` for an unknown or stopped preview or a port it does not list, and `failed` when
+  nothing answers on the port, over IPv4 or IPv6. A dev server on a Mac often listens on
+  `localhost` and so on `::1` only (Vite does), which is why both are tried.
+- Data is a binary frame of type `0x02`:
+
+  ```
+  byte 0       0x02
+  bytes 1..4   sid, unsigned 32-bit big-endian
+  rest         payload, at most 64 KiB is sent per frame
+  ```
+
+  The terminal output frame (`0x01`) is unchanged; a relay routes by the first byte.
+- `sclose` without `error` is a half-close, as TCP's FIN: the sender sends no more, and the other
+  side may go on sending. The stream is gone when both sides have sent `sclose`, or when either
+  sends one with `error`. The agent passes a half-close on to the TCP socket (`end`) and sends
+  its own `sclose` when the dev server closes its side.
+- When the TCP connection is gone (reset, or closed altogether) while the relay's side is still
+  open, the agent sends `sclose` with `error` after the data it already read, so the relay does
+  not wait for an answer on a dead connection. The relay closes its side once the agent has closed
+  its own, as a TCP client does, so a kept-alive connection that the dev server dropped is not
+  used again.
+- Flow control: each side has at most 512 KiB of payload per stream in flight, sent and not yet
+  acknowledged, and stops sending on that stream when the window is full. The receiver sends
+  `sack` with the number of bytes it has passed on, to the TCP socket or to the browser, at least
+  every 32 KiB and whenever it has passed on everything it holds. More than the window, or an
+  `sack` for more than was sent, ends the stream with `error`. A slow phone or a fast dev server
+  so holds at most a window per stream in the relay and in the app.
+- `sid`s are chosen by the relay, unique among its open streams. When the agent connection drops,
+  every stream ends on both sides.
+- The relay opens at most 64 streams per preview, closes one after 120 seconds without data
+  either way unless it carries a WebSocket, and gives the agent 10 seconds to answer `sopen`.
+
+#### HTTP and WebSockets over streams
+
+The relay speaks HTTP/1.1 to the dev server over streams, one stream per connection, keeping
+connections alive between requests; WebSocket handshakes go the same way, after which bytes are
+passed both ways untouched. Any method is passed on.
+
+The relay maps each port's local addresses to its preview origin and back: `http://localhost:P`,
+`http://127.0.0.1:P` and `http://[::1]:P` (and `https:`, `ws:` and `wss:` forms) stand for the
+preview origin of `P`, for every `P` in the preview's `ports`. Other ports are left alone.
+
+Requests, on their way to the dev server:
+
+- `Host: localhost:<port>`, so host checks made for localhost (Vite's `allowedHosts`, Next's
+  `allowedDevOrigins`) pass.
+- `Origin` and `Referer` that are origins of the same preview become their localhost form: a
+  request from the main origin to the API's origin arrives with `Origin: http://localhost:8086`,
+  as on the Mac. Other origins pass unchanged.
+- `X-Forwarded-Host` (the preview host), `X-Forwarded-Proto` (`https`) and `X-Forwarded-For`
+  (what came in, then the address the relay saw) are set; `Forwarded` and `X-Forwarded-Port` are
+  removed.
+- `Accept-Encoding` is removed, so pages arrive uncompressed and can take the client script.
+- The preview cookie is removed from `Cookie`; hop-by-hop headers are removed.
+- Bodies of at most 50 MiB (`413` with a page beyond).
+
+Responses, on their way to the browser:
+
+- `Location`, `Content-Location`, `Access-Control-Allow-Origin`, the URL in `Refresh` and each
+  URL in `Link` are mapped from localhost form to preview origin.
+- **Cookies are shared across the preview domain.** On the Mac a cookie set by `localhost:8087` is
+  sent to `localhost:8086` too, since cookies ignore ports; here each port is its own host. So
+  every `Set-Cookie` gets `Domain=hako.example.com` in place of any `Domain` it had (a
+  `__Host-` cookie, which cannot have one, keeps its origin). Like localhost on a Mac, the preview
+  domain is then shared by every port of every preview. A `Set-Cookie` for the preview cookie or
+  the session cookie is dropped.
+- `X-Frame-Options` is removed, any `frame-ancestors` is removed from `Content-Security-Policy`
+  (and `-Report-Only`), and every response gets
+  `Content-Security-Policy: frame-ancestors <the app's origins>`: a preview can be framed by the
+  app and by nothing else, another preview included.
+- Hop-by-hop headers are removed. Everything else passes unchanged, and bodies stream as they
+  come: server-sent events are not held back.
+- A `text/html` answer that is not compressed, with a body, whose enforced CSP allows a script
+  from its own origin (`script-src-elem`, else `script-src`, else `default-src` holding `'self'`,
+  `*`, the scheme, or a host source matching the origin, and not `'strict-dynamic'`), gets
+  `<script src="/__hako/client.js?p=<id>&v=<version>"></script>` as the first thing in `<head>`,
+  with no `defer` or `async`, so it runs before the page's own scripts. Without a `<head>` within
+  the first 64 KiB, it goes after `<html …>`, else after the doctype (before it would switch the
+  page to quirks mode), else at the very start. `Content-Length` is corrected. A page whose CSP
+  would block the script is left as it is.
+
+The pages a preview origin answers with itself, all small HTML with `Cache-Control: no-store`:
+
+| Status | Page | When |
+|---|---|---|
+| 401 | Open this preview from Hako | No valid preview cookie; a used, expired or foreign ticket. |
+| 404 | No preview called `<id>` | An invalid or reserved label, or an id the Mac does not have. |
+| 404 | No port `<P>` in `<id>` | A port the preview does not list. |
+| 503 | Your Mac is offline | The agent is not connected. |
+| 503 | This preview is stopped | The preview is `stopped` or `failed` (with its `message`), or the agent answered `not_found`. |
+| 503 | This preview is starting | It is `starting` and nothing answers yet; the page reloads itself after 3 seconds. |
+| 503 | Nothing answers on port `<P>` | It is `running` and the connection failed. |
+| 503 | Too many connections | The preview has 64 streams. |
+
+The relay pings each tunnelled WebSocket every 25 seconds while the dev server is quiet, between
+two frames, so proxies keep it open; the browser's pong reaches the dev server, which ignores it.
+
+#### `/__hako/client.js`
+
+Served by the relay itself on every preview origin, with the preview cookie, and never tunnelled.
+It holds the app's origins and the preview's port map, and it:
+
+- maps a URL in a mapped localhost form to its preview origin before it reaches the network, in
+  `fetch` (string, `URL` and `Request`), `XMLHttpRequest.open`, `WebSocket`, `EventSource`,
+  `navigator.sendBeacon`, `window.open`, `Location.assign`/`replace` where a browser lets them be
+  replaced, the `src`, `srcset`, `href`, `action`, `poster` and `data` attributes of elements
+  already there and added or changed later (one `MutationObserver`), and links and forms on click
+  and submit (capture phase). A parser-inserted element starts loading before the observer sees
+  it, so a page that writes such an address in its HTML loads it once from the original address.
+- When framed, reports to `window.parent`, by `postMessage` to the app's origins only:
+
+  ```ts
+  { type: "hako:preview", kind: "location", url, title, width, height }
+  // on load, on every history change (pushState, replaceState, popstate, hashchange), on resize,
+  // and when the title changes; width and height are innerWidth and innerHeight
+  { type: "hako:preview", kind: "console", level: "error" | "warn", message, source, line }
+  // console.error and console.warn, uncaught errors, unhandled rejections; at most 50 per page
+  // load, each text at most 2,000 characters; source and line may be null
+  ```
+
+- Takes from its parent, only when the message comes from `window.parent` and one of the app's
+  origins: `{ type: "hako:preview", kind: "back" | "forward" | "reload" }` and
+  `{ type: "hako:preview", kind: "navigate", path }` (a path on the same origin).
+
+The app shows a preview in a frame loaded from a fresh ticket URL; its CSP allows
+`frame-src <scheme>//*.<preview domain><port>`.
+
+#### Event `notify`, kind `preview_ready`
+
+The desktop app sends a `notify` of kind `preview_ready` when a preview becomes `running`:
+`title` "Preview ready: <name>", `body` the directory, `session_id` and `tab_id` of its tab, and
+`preview_id`, the preview's id. For this kind only, `session_id` may be `null` or left out (a
+preview attached while running has no tab), and `preview_id` is required (a `preview_ready`
+without a valid one is dropped). Clients receive `preview_id` with the other cleaned fields, only
+for this kind. The collapse rule counts a preview without a tab as its own subject
+(`preview:<id>`). The push message carries `preview_id` too; its tag is `hako:<session_id>`, or
+`hako:preview:<id>` without a tab. Each device has a switch for this kind (`kinds.preview_ready`,
+on by default), and a tap opens the preview's viewer (`/#/p/<id>`).
 
 ## Versioning
 
