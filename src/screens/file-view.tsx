@@ -37,6 +37,7 @@ import { relay } from "@/lib/connection";
 import { CodeEditor } from "@/lib/files/editor";
 import { formatSize } from "@/lib/files/format";
 import { type LanguageId, languageLabel, languageOf } from "@/lib/files/language";
+import { isDelimitedText, previewKindOf } from "@/lib/files/preview";
 import { loadLanguage } from "@/lib/files/language-loader";
 import { baseName, parentOf } from "@/lib/files/paths";
 import { detectLineEnding, type SaveOutcome, SaveGuard } from "@/lib/files/save";
@@ -57,6 +58,8 @@ import { useVisibleViewport } from "@/lib/terminal/viewport";
 import { cn } from "@/lib/utils";
 
 const MarkdownView = lazy(() => import("@/components/files/markdown-view"));
+const DocumentPreview = lazy(() => import("@/components/files/preview/document-preview"));
+const SheetView = lazy(() => import("@/components/files/preview/sheet-view"));
 
 type Loaded =
   | { state: "loading" }
@@ -100,7 +103,12 @@ export default function FileView({ path }: { path: string }) {
   const directory = parentOf(path) ?? "/";
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
 
-  if (loaded.state === "ready" && loaded.result.kind === "text") {
+  // A document always opens as its preview, also one that happens to be readable as text (a PDF
+  // can be); a table in text (CSV, TSV) opens as text, with a switch to its table.
+  const preview = previewKindOf(baseName(path));
+  const asDocument = preview !== null && !isDelimitedText(baseName(path));
+
+  if (loaded.state === "ready" && loaded.result.kind === "text" && !asDocument) {
     return (
       <TextFile
         // A fresh read is a fresh document: the editor starts over from what the Mac has now.
@@ -160,6 +168,16 @@ export default function FileView({ path }: { path: string }) {
         </div>
       ) : loaded.result.kind === "image" ? (
         <ImageFile name={name} result={loaded.result} />
+      ) : preview !== null ? (
+        <Suspense fallback={null}>
+          <DocumentPreview
+            path={path}
+            name={name}
+            size={loaded.result.size}
+            kind={preview}
+            fallback={<SaveOffer path={path} name={name} size={loaded.result.size} />}
+          />
+        </Suspense>
       ) : loaded.result.kind === "too_large" ? (
         <FileNotice
           icon={ScaleIcon}
@@ -404,6 +422,7 @@ function TextFile({
     [name, content],
   );
   const isMarkdown = language === "markdown";
+  const isTable = isDelimitedText(name);
   const wrap = prefs.wrap ?? (isMarkdown || language === "text");
 
   const host = useRef<HTMLDivElement>(null);
@@ -615,9 +634,9 @@ function TextFile({
         <span>{formatSize(bytes)}</span>
         {lineEnding === "\r\n" ? <span>CRLF</span> : null}
         <span className="flex-1" />
-        {isMarkdown && !editing ? (
+        {(isMarkdown || isTable) && !editing ? (
           <ToggleGroup
-            aria-label="How to show this document"
+            aria-label={isTable ? "How to show this table" : "How to show this document"}
             size="sm"
             spacing={0}
             value={[rendered === null ? "raw" : "rendered"]}
@@ -635,7 +654,7 @@ function TextFile({
               Raw
             </ToggleGroupItem>
             <ToggleGroupItem value="rendered" className="font-sans aria-pressed:text-lid">
-              Rendered
+              {isTable ? "Table" : "Rendered"}
             </ToggleGroupItem>
           </ToggleGroup>
         ) : null}
@@ -720,7 +739,13 @@ function TextFile({
         {rendered !== null ? (
           <div className="absolute inset-0">
             <Suspense fallback={null}>
-              <MarkdownView source={rendered} directory={directory} />
+              {isTable ? (
+                <div className="flex h-full flex-col">
+                  <SheetView source={{ text: rendered, name }} fallback={null} />
+                </div>
+              ) : (
+                <MarkdownView source={rendered} directory={directory} />
+              )}
             </Suspense>
           </div>
         ) : null}
