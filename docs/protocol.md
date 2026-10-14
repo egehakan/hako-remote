@@ -2178,10 +2178,18 @@ the session active; `browser.close_tab` closes one. Closing the last tab ends th
   `fs.upload_end` returned; empty `paths` is a cancel. The Mac sets them with
   `DOM.setFileInputFiles`.
 - **Downloads.** `Browser.setDownloadBehavior` into `<HAKO_DATA_DIR>/preview-downloads/` (deleted
-  after 7 days). Event `browser.download` `{ bid, path, name, size, done }`: `path` absolute on the
-  Mac, `name` the file's name, `size` in bytes (-1 while unknown); sent when a download starts
+  after 7 days). Event `browser.download` `{ bid, path, name, size, done, state }`: `path` absolute
+  on the Mac, `name` the file's name, `size` in bytes (-1 while unknown); sent when a download starts
   (`done: false`) and when it has finished (`done: true`). The phone then fetches it with
   `fs.download` and offers Save to phone.
+  - `state` (an addition; older apps send only `done`) is `"progress"`, `"done"`, `"cancelled"` or
+    `"failed"`, and `done` is `state === "done"`. A download sends `progress` when it starts and
+    may send it again as it goes (no more than once a second), then exactly one of `done`,
+    `cancelled` (stopped on the Mac) or `failed` (the transfer broke, or the file could not be
+    kept). The events of one download carry the same `name`; `path` may change on the last one.
+  - The client shows a cancelled or failed download as such, and gives up on one it has heard
+    nothing about for 10 minutes ("The download did not finish on your Mac"), whatever the app
+    sends; a later event for it still counts.
 - **Copy.** `browser.copy` `{ bid }` -> `{ text }`: the page's current selection, including a
   selection inside a text field, read in the isolated world on `localhost` pages; `""` when nothing
   is selected. On other pages Cmd+C and reading the Mac's clipboard is not done, so the answer is

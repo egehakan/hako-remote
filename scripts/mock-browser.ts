@@ -310,7 +310,17 @@ export function createBrowserMock(host: BrowserHost) {
   /** Pages Chrome attached and paused, waiting to be claimed, by target id. */
   const waiting = new Map<string, { cdpSession: string; openerId: string | null }>();
   const claims = new Map<string, (cdpSession: string) => void>();
-  const downloads = new Map<string, { session: Session; name: string; size: number }>();
+  const downloads = new Map<
+    string,
+    {
+      session: Session;
+      name: string;
+      size: number;
+      path: string;
+      sentAt: number;
+      cancelled: boolean;
+    }
+  >();
 
   const tabOf = (cdpSession: string | undefined) => {
     for (const session of sessions.values()) {
@@ -706,14 +716,26 @@ export function createBrowserMock(host: BrowserHost) {
       const session = found?.session ?? [...sessions.values()].at(-1);
       if (!session) return;
       const name = String(params.suggestedFilename || "download");
-      downloads.set(params.guid as string, { session, name, size: -1 });
+      const guid = params.guid as string;
+      const path = join(host.downloadsDir, guid);
+      downloads.set(guid, { session, name, size: -1, path, sentAt: Date.now(), cancelled: false });
       host.sendEvent("browser.download", {
         bid: session.bid,
-        path: join(host.downloadsDir, params.guid as string),
+        path,
         name,
         size: -1,
         done: false,
+        state: "progress",
       });
+      // The lab's `cancel-me` download stands for one the owner cancels in Chrome on the Mac.
+      if (name.startsWith("cancel-me")) {
+        setTimeout(() => {
+          const download = downloads.get(guid);
+          if (!download) return;
+          download.cancelled = true;
+          void connection.send("Browser.cancelDownload", { guid }).catch(() => {});
+        }, 2000);
+      }
     });
     connection.on("Browser.downloadProgress", (params) => {
       const download = downloads.get(params.guid as string);
@@ -721,8 +743,33 @@ export function createBrowserMock(host: BrowserHost) {
       if (typeof params.totalBytes === "number" && params.totalBytes > 0) {
         download.size = params.totalBytes;
       }
-      if (params.state === "canceled") {
+      const ended = (state: "cancelled" | "failed", path = download.path) => {
         downloads.delete(params.guid as string);
+        host.sendEvent("browser.download", {
+          bid: download.session.bid,
+          path,
+          name: download.name,
+          size: download.size,
+          done: false,
+          state,
+        });
+      };
+      if (params.state === "canceled") {
+        // Chrome says `canceled` for a transfer that broke too; only the one cancelled here is.
+        ended(download.cancelled ? "cancelled" : "failed");
+        return;
+      }
+      if (params.state === "inProgress") {
+        if (Date.now() - download.sentAt < 1000) return;
+        download.sentAt = Date.now();
+        host.sendEvent("browser.download", {
+          bid: download.session.bid,
+          path: download.path,
+          name: download.name,
+          size: download.size,
+          done: false,
+          state: "progress",
+        });
         return;
       }
       if (params.state !== "completed") return;
@@ -735,6 +782,7 @@ export function createBrowserMock(host: BrowserHost) {
         renameSync(join(host.downloadsDir, params.guid as string), path);
       } catch (error) {
         console.error(`mock browser: download ${download.name}: ${error}`);
+        ended("failed");
         return;
       }
       host.sendEvent("browser.download", {
@@ -743,6 +791,7 @@ export function createBrowserMock(host: BrowserHost) {
         name: download.name,
         size: (params.receivedBytes as number) ?? download.size,
         done: true,
+        state: "done",
       });
     });
   }

@@ -34,7 +34,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
-import type { DownloadItem } from "@/lib/browser/session";
+import type { DownloadItem, DownloadPhase } from "@/lib/browser/downloads";
 import { formatSize } from "@/lib/files/format";
 import { handOver } from "@/lib/transfers/actions";
 import { describeTransferFailure, fraction } from "@/lib/transfers/describe";
@@ -522,6 +522,13 @@ export function displayUrl(url: string): string {
 
 const BROWSER_DOWNLOADS = "browser-downloads";
 
+const UNFINISHED: Record<Exclude<DownloadPhase, "done">, string> = {
+  progress: "Downloading on your Mac…",
+  cancelled: "Cancelled on your Mac",
+  failed: "The download failed on your Mac",
+  stalled: "The download did not finish on your Mac",
+};
+
 /**
  * Files the page downloaded on the Mac. Each can be fetched to this phone through the same
  * transfer the Files screen uses.
@@ -561,14 +568,25 @@ export function DownloadsBar({
             });
             setFetching((before) => ({ ...before, [item.id]: id }));
           };
+          const done = item.phase === "done";
+          const broken = item.phase === "failed" || item.phase === "stalled";
           return (
             <li key={item.id} className="flex items-center gap-2 px-safe py-2">
-              <DownloadIcon className="size-4 shrink-0 text-lid" />
+              {broken ? (
+                <CircleAlertIcon className="size-4 shrink-0 text-destructive" />
+              ) : (
+                <DownloadIcon
+                  className={cn(
+                    "size-4 shrink-0",
+                    item.phase === "cancelled" ? "text-muted-foreground" : "text-lid",
+                  )}
+                />
+              )}
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[0.875rem] leading-5">{item.name}</span>
                 <span className="block truncate text-[0.75rem] leading-4 text-muted-foreground">
-                  {!item.done
-                    ? "Downloading on your Mac…"
+                  {item.phase !== "done"
+                    ? UNFINISHED[item.phase]
                     : transfer?.state === "failed"
                       ? describeTransferFailure(transfer, support.limits.maxBytes)
                       : transfer?.delivered
@@ -578,7 +596,7 @@ export function DownloadsBar({
                           : `${item.size >= 0 ? `${formatSize(item.size)}, ` : ""}on your Mac`}
                 </span>
               </span>
-              {item.done && !transfer?.delivered ? (
+              {done && !transfer?.delivered ? (
                 <Button
                   size="sm"
                   variant={transfer?.state === "done" ? "default" : "secondary"}

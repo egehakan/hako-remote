@@ -15,6 +15,7 @@ import type {
   BrowserViewport,
 } from "@shared/browser";
 import { relay, RpcFailure } from "@/lib/connection";
+import { type DownloadItem, markStalled, mergeDownload, nextStallAt } from "./downloads";
 import { FramePipeline } from "./frames";
 
 export type BrowserTarget = { previewId: string } | { url: string };
@@ -33,7 +34,7 @@ export type SessionPhase =
   | "unsupported";
 
 export type ConsoleItem = BrowserConsole & { id: number; at: number };
-export type DownloadItem = BrowserDownload & { id: number };
+export type { DownloadItem };
 
 export type SessionSnapshot = {
   phase: SessionPhase;
@@ -98,6 +99,7 @@ export class MacBrowserSession {
   private nextItem = 1;
   /** Where the session was when it was lost, to open it there again. */
   private lastUrl: string | null = null;
+  private stallTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(target: BrowserTarget, viewport: BrowserViewport) {
     this.target = target;
@@ -189,6 +191,7 @@ export class MacBrowserSession {
 
   dispose(): void {
     this.disposed = true;
+    if (this.stallTimer !== null) clearTimeout(this.stallTimer);
     for (const stop of this.stops) stop();
     this.stops = [];
     this.pipeline.reset();
@@ -264,7 +267,7 @@ export class MacBrowserSession {
   }
 
   dismissDownload(id: number): void {
-    this.set({ downloads: this.snapshot.downloads.filter((item) => item.id !== id) });
+    this.setDownloads(this.snapshot.downloads.filter((item) => item.id !== id));
   }
 
   clearConsole(): void {
@@ -446,17 +449,22 @@ export class MacBrowserSession {
   }
 
   private addDownload(download: BrowserDownload): void {
-    const items = this.snapshot.downloads;
-    const started = download.done
-      ? items.findIndex((item) => !item.done && item.name === download.name)
-      : -1;
-    if (started !== -1) {
-      const next = [...items];
-      next[started] = { ...download, id: items[started].id };
-      this.set({ downloads: next });
-    } else {
-      this.set({ downloads: [...items, { ...download, id: this.nextItem++ }] });
-    }
+    this.setDownloads(
+      mergeDownload(this.snapshot.downloads, download, this.nextItem++, Date.now()),
+    );
+  }
+
+  /** Sets the list, and wakes up when the next unfinished download is due to be given up on. */
+  private setDownloads(downloads: DownloadItem[]): void {
+    if (this.stallTimer !== null) clearTimeout(this.stallTimer);
+    this.stallTimer = null;
+    this.set({ downloads });
+    const due = nextStallAt(downloads);
+    if (due === null || this.disposed) return;
+    this.stallTimer = setTimeout(
+      () => this.setDownloads(markStalled(this.snapshot.downloads, Date.now())),
+      Math.max(0, due - Date.now()) + 50,
+    );
   }
 
   private set(change: Partial<SessionSnapshot>): void {

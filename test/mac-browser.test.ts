@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { BrowserFrame } from "../shared/browser.ts";
+import type { BrowserDownload, BrowserFrame } from "../shared/browser.ts";
+import {
+  DOWNLOAD_STALL_MS,
+  markStalled,
+  mergeDownload,
+  nextStallAt,
+} from "../src/lib/browser/downloads.ts";
 import { FramePipeline } from "../src/lib/browser/frames.ts";
 import { editEvents, keyDownEvent, type KeyLike, pasteEvents } from "../src/lib/browser/keys.ts";
 import {
@@ -251,4 +257,67 @@ test("frames: after a reset nothing of the old session is drawn or acknowledged"
   assert.deepEqual(log, ["decode 1"]);
   pipeline.push({ ...frame(1), bid: 8 });
   assert.deepEqual(log, ["decode 1", "decode 1"]);
+});
+
+// Downloads
+
+const download = (change: Partial<BrowserDownload> = {}): BrowserDownload => ({
+  bid: 7,
+  path: "/mac/downloads/guid-1",
+  name: "report.txt",
+  size: -1,
+  done: false,
+  ...change,
+});
+
+test("downloads: an older app's start and finish, known only by `done`, make one finished item", () => {
+  const started = mergeDownload([], download(), 1, 0);
+  assert.equal(started[0].phase, "progress");
+  const finished = mergeDownload(
+    started,
+    download({ path: "/mac/downloads/guid/report.txt", size: 52, done: true }),
+    2,
+    10,
+  );
+  assert.equal(finished.length, 1);
+  assert.equal(finished[0].id, 1);
+  assert.equal(finished[0].phase, "done");
+  assert.equal(finished[0].path, "/mac/downloads/guid/report.txt");
+});
+
+test("downloads: progress keeps a known size, and cancelled and failed end the item", () => {
+  let items = mergeDownload([], download({ state: "progress" }), 1, 0);
+  items = mergeDownload(items, download({ state: "progress", size: 900 }), 2, 5);
+  items = mergeDownload(items, download({ state: "progress" }), 3, 6);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].size, 900);
+  items = mergeDownload(items, download({ state: "cancelled" }), 4, 7);
+  assert.equal(items[0].phase, "cancelled");
+  // A finished item is not reopened: the same file downloaded again is a new one.
+  items = mergeDownload(items, download({ state: "progress" }), 5, 8);
+  items = mergeDownload(items, download({ state: "failed" }), 6, 9);
+  assert.deepEqual(
+    items.map((item) => [item.id, item.phase]),
+    [
+      [1, "cancelled"],
+      [5, "failed"],
+    ],
+  );
+});
+
+test("downloads: one the Mac says nothing more about is given up on, and revived by news", () => {
+  let items = mergeDownload([], download(), 1, 1000);
+  items = mergeDownload(items, download({ name: "b.zip", path: "/mac/b" }), 2, 2000);
+  assert.equal(nextStallAt(items), 1000 + DOWNLOAD_STALL_MS);
+  assert.equal(markStalled(items, 1000 + DOWNLOAD_STALL_MS - 1), items);
+  items = markStalled(items, 1000 + DOWNLOAD_STALL_MS);
+  assert.deepEqual(
+    items.map((item) => item.phase),
+    ["stalled", "progress"],
+  );
+  assert.equal(nextStallAt(items), 2000 + DOWNLOAD_STALL_MS);
+  items = mergeDownload(items, download({ state: "done", size: 3 }), 3, 1000 + DOWNLOAD_STALL_MS);
+  assert.equal(items[0].phase, "done");
+  items = markStalled(items, 2000 + DOWNLOAD_STALL_MS);
+  assert.equal(nextStallAt(items), null);
 });

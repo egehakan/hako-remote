@@ -112,6 +112,7 @@ export type BrowserPicker =
 /** Event `browser.file_chooser`. `accept` is the input's `accept` attribute, "" without one. */
 export type BrowserFileChooser = { bid: number; id: string; multiple: boolean; accept: string };
 
+export type DownloadState = "progress" | "done" | "cancelled" | "failed";
 /** Event `browser.download`. `size` is in bytes, -1 while unknown. */
 export type BrowserDownload = {
   bid: number;
@@ -119,6 +120,8 @@ export type BrowserDownload = {
   name: string;
   size: number;
   done: boolean;
+  /** Absent from older apps, which send only `done`. */
+  state?: DownloadState;
 };
 
 export type ConsoleLevel = "error" | "warn" | "info" | "log" | "debug" | "network";

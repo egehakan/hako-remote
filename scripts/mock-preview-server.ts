@@ -196,7 +196,10 @@ sentence and copy it.</p>
 <input id="files" type="file" name="files" multiple accept="image/*,.txt,.pdf">
 <button>Upload</button></form>
 <pre id="file-result">no files chosen</pre>
-<p><a id="download" href="/download/report.txt">Download report.txt</a></p>
+<p><a id="download" href="/download/report.txt">Download report.txt</a> ·
+<a id="download-slow" href="/download/slow.bin">A slow download</a> ·
+<a id="download-broken" href="/download/broken.bin">One that breaks</a> ·
+<a id="download-cancel" href="/download/cancel-me.bin">One cancelled on the Mac</a></p>
 <h2>Console</h2>
 <p><button id="log-error">Log an error</button> <button id="throw">Throw</button>
 <button id="fetch-missing">Fetch a missing file</button></p>
@@ -308,6 +311,36 @@ console.warn("lab: a warning on load");
         });
         res.end(`A report from the browser lab, made at ${new Date().toISOString()}.\n`);
         return;
+      case "/download/slow.bin":
+      case "/download/broken.bin":
+      case "/download/cancel-me.bin": {
+        // Slow: 6 chunks a second apart, then done. Broken: two chunks, then the connection drops.
+        // Cancel-me: ten minutes long; the mock agent cancels it, as the owner might on the Mac.
+        const name = url.pathname.slice("/download/".length);
+        const chunk = Buffer.alloc(64 * 1024, 0x61);
+        const chunks = name === "cancel-me.bin" ? 600 : 6;
+        res.writeHead(200, {
+          "Content-Type": "application/octet-stream",
+          "Content-Disposition": `attachment; filename="${name}"`,
+          "Content-Length": String(chunk.length * chunks),
+        });
+        let sent = 0;
+        const timer = setInterval(() => {
+          if (name === "broken.bin" && sent === 2) {
+            clearInterval(timer);
+            res.destroy();
+            return;
+          }
+          res.write(chunk);
+          sent += 1;
+          if (sent === chunks) {
+            clearInterval(timer);
+            res.end();
+          }
+        }, 1000);
+        res.on("close", () => clearInterval(timer));
+        return;
+      }
       case "/upload": {
         const chunks: Buffer[] = [];
         req.on("data", (chunk: Buffer) => chunks.push(chunk));
