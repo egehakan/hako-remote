@@ -1,3 +1,4 @@
+import { BROWSER_FRAME_TYPE, bidOf, readBrowserFrameBid } from "../shared/browser.ts";
 import { readOutputFrameSessionId } from "../shared/frames.ts";
 import { isPreviewId, isPort, type Preview } from "../shared/previews.ts";
 import { StreamHub, type TunnelStream } from "./previews/streams.ts";
@@ -47,6 +48,8 @@ type Client = {
   pending: Set<string>;
   /** Terminal sessions this client receives output for. */
   terminals: Set<string>;
+  /** Mac browser sessions this client opened, which end when it leaves. */
+  browsers: Set<number>;
 };
 
 type Pending = {
@@ -55,6 +58,8 @@ type Pending = {
   timer: ReturnType<typeof setTimeout>;
   /** Set for `term.subscribe`: the session to start delivering once the agent says yes. */
   subscribeTo: string | null;
+  /** True for `browser.open`: the session in the answer belongs to this client. */
+  opensBrowser: boolean;
 };
 
 type Agent = {
@@ -114,8 +119,9 @@ export function rewriteRequestId(connectionId: string, clientRequestId: string):
 
 /**
  * Passes frames between the one agent and any number of clients. Apart from the terminal
- * subscription methods it has to track, it forwards method names and payloads without reading them.
- * How long it waits for an answer is the client's to say, request by request, never the method's.
+ * subscription methods and the opening and closing of Mac browser sessions, which it has to track
+ * to route their output, it forwards method names and payloads without reading them. How long it
+ * waits for an answer is the client's to say, request by request, never the method's.
  */
 export class Relay {
   private readonly requestTimeoutMs: number;
@@ -125,6 +131,10 @@ export class Relay {
   private readonly clients = new Map<string, Client>();
   private readonly pending = new Map<string, Pending>();
   private readonly subscribers = new Map<string, Set<Client>>();
+  /** The client each Mac browser session belongs to, by bid: the one whose `browser.open` made it. */
+  private readonly browserOwners = new Map<number, Client>();
+  /** Sessions the agent was already told to close because nobody owns them. */
+  private readonly orphanBrowsers = new Set<number>();
   /** Sessions the agent was already told to stop streaming because nobody is subscribed. */
   private readonly orphansReported = new Set<string>();
   private agent: Agent | null = null;
@@ -209,7 +219,9 @@ export class Relay {
     const agent = this.agent;
     if (!agent || agent.socket !== socket) return;
     if (typeof data !== "string") {
-      if (!this.streams.handleBinary(data)) this.routeOutput(agent, data);
+      if (this.streams.handleBinary(data)) return;
+      if (data[0] === BROWSER_FRAME_TYPE) this.routeBrowserFrame(agent, data);
+      else this.routeOutput(agent, data);
       return;
     }
     const frame = parseFrame(data);
@@ -234,7 +246,14 @@ export class Relay {
 
   addClient(socket: RelaySocket, sessionHash: string): string {
     const id = `c${(this.nextClientNumber++).toString(36)}`;
-    this.clients.set(id, { id, socket, sessionHash, pending: new Set(), terminals: new Set() });
+    this.clients.set(id, {
+      id,
+      socket,
+      sessionHash,
+      pending: new Set(),
+      terminals: new Set(),
+      browsers: new Set(),
+    });
     this.sendTo(socket, this.statusEvent());
     return id;
   }
@@ -251,6 +270,12 @@ export class Relay {
     for (const sessionId of client.terminals) {
       if (this.unsubscribe(client, sessionId)) this.tellAgentToStop(sessionId);
     }
+    // A browser on the Mac that nobody watches any more is closed with its tabs.
+    for (const bid of client.browsers) {
+      this.browserOwners.delete(bid);
+      this.closeBrowser(bid);
+    }
+    client.browsers.clear();
   }
 
   /** Sends an event of the relay's own to every client. */
@@ -270,7 +295,7 @@ export class Relay {
 
   handleClientMessage(id: string, data: string | Uint8Array): void {
     const client = this.clients.get(id);
-    // Clients never send binary frames; those carry terminal output from the agent only.
+    // Clients never send binary frames; those come from the agent only.
     if (!client || typeof data !== "string") return;
     const frame = parseFrame(data);
     if (!frame) return;
@@ -315,7 +340,13 @@ export class Relay {
     }
 
     let subscribeTo: string | null = null;
-    if (frame.method === "term.subscribe") {
+    if (frame.method === "browser.close") {
+      const bid = bidOf(frame.params);
+      if (bid !== null && this.browserOwners.get(bid) === client) {
+        this.browserOwners.delete(bid);
+        client.browsers.delete(bid);
+      }
+    } else if (frame.method === "term.subscribe") {
       subscribeTo = sessionIdOf(frame.params);
       if (subscribeTo !== null) this.orphansReported.delete(subscribeTo);
     } else if (frame.method === "term.unsubscribe") {
@@ -336,7 +367,13 @@ export class Relay {
       requestTimeout(frame.timeout_ms, this.requestTimeoutMs),
     );
     timer.unref();
-    this.pending.set(rewritten, { client, clientRequestId: requestId, timer, subscribeTo });
+    this.pending.set(rewritten, {
+      client,
+      clientRequestId: requestId,
+      timer,
+      subscribeTo,
+      opensBrowser: frame.method === "browser.open",
+    });
     client.pending.add(rewritten);
     this.sendTo(agent.socket, {
       t: "req",
@@ -375,6 +412,14 @@ export class Relay {
     if (pending.subscribeTo !== null && frame.ok === true) {
       this.subscribe(pending.client, pending.subscribeTo);
     }
+    if (pending.opensBrowser && frame.ok === true) {
+      const bid = bidOf(frame.result);
+      if (bid !== null && this.clients.has(pending.client.id)) {
+        this.browserOwners.set(bid, pending.client);
+        pending.client.browsers.add(bid);
+        this.orphanBrowsers.delete(bid);
+      }
+    }
     this.sendTo(pending.client.socket, { ...frame, id: pending.clientRequestId });
   }
 
@@ -390,6 +435,10 @@ export class Relay {
       return;
     }
     const event: EventFrame = { t: "evt", event: frame.event, data: frame.data ?? {} };
+    if (frame.event.startsWith("browser.")) {
+      this.routeBrowserEvent(frame.event, event);
+      return;
+    }
     const sessionId = frame.event.startsWith("term.") ? sessionIdOf(frame.data) : null;
     if (sessionId === null) {
       this.broadcast(event);
@@ -419,6 +468,54 @@ export class Relay {
       this.orphansReported.add(sessionId);
       this.tellAgentToStop(sessionId, agent);
     }
+  }
+
+  /** A browser session's events go to the client that owns it, and to nobody else. */
+  private routeBrowserEvent(name: string, event: EventFrame): void {
+    const bid = bidOf(event.data);
+    if (bid === null) return;
+    const owner = this.browserOwners.get(bid);
+    if (owner) this.sendTo(owner.socket, event);
+    if (name === "browser.closed" && owner) {
+      this.browserOwners.delete(bid);
+      owner.browsers.delete(bid);
+    }
+  }
+
+  /**
+   * A picture of a browser session goes to its owner only. One that nobody owns (its client left,
+   * or gave up waiting for `browser.open`) closes the session, once.
+   */
+  private routeBrowserFrame(agent: Agent, frame: Uint8Array): void {
+    const bid = readBrowserFrameBid(frame);
+    if (bid === null) return;
+    const owner = this.browserOwners.get(bid);
+    if (owner) {
+      this.sendRaw(owner.socket, frame);
+      return;
+    }
+    if (!this.orphanBrowsers.has(bid) && !this.hasPendingBrowserOpen()) {
+      this.orphanBrowsers.add(bid);
+      this.closeBrowser(bid, agent);
+    }
+  }
+
+  private hasPendingBrowserOpen(): boolean {
+    for (const pending of this.pending.values()) {
+      if (pending.opensBrowser) return true;
+    }
+    return false;
+  }
+
+  /** Asks the agent to close a browser session; its answer is not waited for. */
+  private closeBrowser(bid: number, agent: Agent | null = this.agent): void {
+    if (!agent) return;
+    this.sendTo(agent.socket, {
+      t: "req",
+      id: this.nextRelayRequestId(),
+      method: "browser.close",
+      params: { bid },
+    });
   }
 
   private hasPendingSubscribe(sessionId: string): boolean {
@@ -559,8 +656,14 @@ export class Relay {
       this.fail(pending.client, pending.clientRequestId, "agent_offline", "The Mac disconnected");
     }
     this.pending.clear();
-    for (const client of this.clients.values()) client.terminals.clear();
+    for (const client of this.clients.values()) {
+      client.terminals.clear();
+      client.browsers.clear();
+    }
     this.subscribers.clear();
+    // The Mac's browser sessions end with its connection.
+    this.browserOwners.clear();
+    this.orphanBrowsers.clear();
     this.orphansReported.clear();
     if (wasAnnounced) this.broadcast(this.statusEvent());
   }
