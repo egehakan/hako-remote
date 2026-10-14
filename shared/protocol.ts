@@ -30,7 +30,8 @@ export type ErrorCode =
   | "git_failed"
   | "busy";
 
-export type RpcError = { code: ErrorCode; message: string };
+/** `limit` comes with `too_large` from `fs.archive` and `fs.extract`: the number that was exceeded. */
+export type RpcError = { code: ErrorCode; message: string; limit?: number };
 
 export type RequestFrame = {
   t: "req";
@@ -140,6 +141,36 @@ export type FsWriteParams = { path: string; content: string; expected_mtime: num
 export type FsWriteResult = { mtime: number; size: number };
 
 export type FsMkdirParams = { path: string };
+
+export type FsStatResult = {
+  kind: FsEntry["kind"];
+  size: number;
+  mtime: number;
+  /** What a symlink holds, as written; null for every other kind. */
+  target: string | null;
+};
+export type FsCreateFileResult = { mtime: number };
+export type FsRenameParams = { path: string; name: string };
+export type FsRenameResult = { path: string };
+
+/** What a copy or a move does when an item's name is taken in the destination. */
+export type FsConflictChoice = "fail" | "rename" | "replace";
+export type FsTransferParams = {
+  sources: string[];
+  destination: string;
+  on_conflict: FsConflictChoice;
+};
+export type FsItemResult = {
+  source: string;
+  path: string | null;
+  error: { code: ErrorCode; message: string } | null;
+};
+export type FsItemResults = { results: FsItemResult[] };
+
+export type FsArchiveParams = { path: string; skip_heavy: boolean };
+export type FsArchiveResult = { path: string; name: string; size: number; skipped: number };
+export type FsExtractParams = { path: string; destination: string };
+export type FsExtractResult = { path: string; entries: number };
 
 export type FsTransferInfo = { max_bytes: number; chunk_bytes: number };
 

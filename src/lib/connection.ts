@@ -19,10 +19,13 @@ export type ConnectionSnapshot = {
 
 export class RpcFailure extends Error {
   readonly code: ErrorCode | "disconnected";
+  /** The limit a `too_large` was over, when the Mac said. */
+  readonly limit: number | null;
 
-  constructor(code: ErrorCode | "disconnected", message: string) {
+  constructor(code: ErrorCode | "disconnected", message: string, limit: number | null = null) {
     super(message);
     this.code = code;
+    this.limit = limit;
   }
 }
 
@@ -240,8 +243,14 @@ class RelayConnection {
       if (frame.ok === true) {
         request.resolve(frame.result);
       } else {
-        const error = (frame.error ?? {}) as { code?: ErrorCode; message?: string };
-        request.reject(new RpcFailure(error.code ?? "failed", error.message ?? "Request failed"));
+        const error = (frame.error ?? {}) as { code?: ErrorCode; message?: string; limit?: unknown };
+        request.reject(
+          new RpcFailure(
+            error.code ?? "failed",
+            error.message ?? "Request failed",
+            typeof error.limit === "number" ? error.limit : null,
+          ),
+        );
       }
     } else if (frame.t === "evt" && typeof frame.event === "string") {
       if (frame.event === "agent.status") {

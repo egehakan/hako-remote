@@ -2,8 +2,8 @@
 
 import { NAME_MAX_BYTES, nameBytes, nameProblem } from "./files.ts";
 
-/** The largest file that travels in either direction. */
-export const TRANSFER_MAX_BYTES = 50 * 1024 * 1024;
+/** The largest file that travels in either direction. An app from before round 1 says 50 MiB. */
+export const TRANSFER_MAX_BYTES = 200 * 1024 * 1024;
 /** The most bytes one piece carries, before base64. */
 export const TRANSFER_CHUNK_BYTES = 1024 * 1024;
 /** How long the Mac keeps an upload that nothing has been asked of. */

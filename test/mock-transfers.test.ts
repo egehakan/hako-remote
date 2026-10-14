@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { createTransferMethods } from "../scripts/mock-transfers.ts";
+import { TRANSFER_MAX_BYTES } from "../shared/transfers.ts";
 
 const root = realpathSync(mkdtempSync(join(tmpdir(), "hako-transfer-test-")));
 mkdirSync(join(root, "inbox"));
@@ -124,7 +125,7 @@ test("limits, places outside the tree and folders that refuse are all told apart
         ...change,
       }),
     );
-  assert.equal(begin({ size: 50 * 1024 * 1024 + 1 }), "too_large");
+  assert.equal(begin({ size: TRANSFER_MAX_BYTES + 1 }), "too_large");
   assert.equal(begin({ name: "a/b" }), "bad_request");
   assert.equal(begin({ destination: { kind: "dir", path: "/tmp" } }), "permission_denied");
   assert.equal(begin({ destination: { kind: "dir", path: join(root, "nowhere") } }), "not_found");
