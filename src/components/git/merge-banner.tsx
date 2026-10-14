@@ -46,7 +46,11 @@ export function MergeBanner({ repo, merge }: MergeBannerProps) {
           {merge.conflicts.map((path) => {
             const cut = path.lastIndexOf("/");
             return (
-              <li key={path}>
+              // A merge can stop at hundreds of files; the ones off screen are not laid out.
+              <li
+                key={path}
+                className="[contain-intrinsic-size:auto_3rem] [content-visibility:auto]"
+              >
                 <a
                   href={routes.file(joinPath(repo.path, path))}
                   className="flex min-h-12 items-center gap-3 px-3 py-1.5 outline-none hover:bg-accent/50 focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset"
