@@ -46,6 +46,11 @@
 // command has finished) or b (four in a second, to see the relay collapse them) in this console,
 // or write one of those words to the file the mock agent names at start (MOCK_NOTIFY_FILE), with a
 // session id after it to choose the terminal: `echo "agent_waiting sess-0007" > <file>`.
+//
+// Previews (scripts/mock-previews.ts) are real dev servers on this computer, started with the mock
+// agent and stopped with it, each with a tab that shows its output; Ctrl+C there stops it.
+// MOCK_PREVIEWS names a JSON file of more to run (a Vite app, say), MOCK_PREVIEWS_OFF=1 leaves the
+// preview methods and streams out, as the desktop app before them would.
 
 import { type ChildProcess, spawn } from "node:child_process";
 import {
@@ -91,6 +96,7 @@ import {
 } from "./mock-files.ts";
 import { createDocumentFixture } from "./mock-documents.ts";
 import { createOperationMethods, LimitFailure } from "./mock-operations.ts";
+import { createPreviewMock, type LogTab, PreviewFailure } from "./mock-previews.ts";
 import { createTransferMethods } from "./mock-transfers.ts";
 
 const RELAY_URL = process.env.RELAY_URL ?? `ws://localhost:${process.env.PORT ?? 8787}/ws/agent`;
@@ -262,6 +268,27 @@ class FakeTerminal extends MockTerminal {
   protected dispose(): void {
     clearInterval(this.timer);
   }
+}
+
+/** A preview's tab: what its dev server prints. Ctrl+C typed into it stops the server. */
+class LogTerminal extends MockTerminal {
+  onInterrupt: (() => void) | null = null;
+
+  constructor(sessionId: string) {
+    super(sessionId, SHELL_SCROLLBACK_BYTES);
+  }
+
+  write(text: string): void {
+    this.emit(encoder.encode(text));
+  }
+
+  input(data: string): void {
+    if (data.includes("\u0003")) this.onInterrupt?.();
+  }
+
+  protected applySize(): void {}
+
+  protected dispose(): void {}
 }
 
 // The real shell
@@ -870,6 +897,7 @@ function handleFrame(text: string): void {
     }
     return;
   }
+  if (previews?.handleStreamText(frame)) return;
   if (frame.t !== "req" || typeof frame.id !== "string" || typeof frame.method !== "string") return;
 
   const id = frame.id;
@@ -885,7 +913,8 @@ function handleFrame(text: string): void {
     folderMethods[frame.method] ??
     renameMethods[frame.method] ??
     fsMethods[frame.method] ??
-    gitMethods[frame.method];
+    gitMethods[frame.method] ??
+    previews?.methods[frame.method];
   if (!method) {
     send({
       t: "res",
@@ -897,7 +926,10 @@ function handleFrame(text: string): void {
   }
   const fail = (error: unknown) => {
     const known =
-      error instanceof RpcFailure || error instanceof FsFailure || error instanceof GitFailure;
+      error instanceof RpcFailure ||
+      error instanceof FsFailure ||
+      error instanceof GitFailure ||
+      error instanceof PreviewFailure;
     const message = error instanceof Error ? error.message : "Failed";
     const limit = error instanceof LimitFailure ? { limit: error.limit } : {};
     send({
@@ -930,7 +962,10 @@ function handleFrame(text: string): void {
 type Sample = { title: string; message: string };
 
 /** `{agent}` stands for the name of the coding agent in the terminal. */
-const NOTIFY_SAMPLES: Record<NotifyKind, Sample[]> = {
+/** The kinds about a terminal; `preview_ready` is sent by the previews themselves. */
+type TerminalKind = Exclude<NotifyKind, "preview_ready">;
+
+const NOTIFY_SAMPLES: Record<TerminalKind, Sample[]> = {
   agent_waiting: [
     { title: "{agent} needs your permission", message: "Allow Bash: pnpm test --filter relay?" },
     { title: "{agent} has a question", message: "Which of the two migrations should run first?" },
@@ -952,7 +987,7 @@ const NOTIFY_SAMPLES: Record<NotifyKind, Sample[]> = {
   ],
 };
 
-const NOTIFY_WORDS: Record<string, NotifyKind> = {
+const NOTIFY_WORDS: Record<string, TerminalKind> = {
   w: "agent_waiting",
   waiting: "agent_waiting",
   d: "agent_done",
@@ -983,7 +1018,7 @@ function ownedTerminals(): OwnedTerminal[] {
  * Sends one `notify` for a terminal of this mock agent: the one named, or the next in turn. An
  * agent's notification also sets the status the workspace list shows, as the desktop app does.
  */
-function emitNotify(kind: NotifyKind, sessionId?: string, sample?: Sample): void {
+function emitNotify(kind: TerminalKind, sessionId?: string, sample?: Sample): void {
   const owned = ownedTerminals();
   // A command finishes in a plain terminal; an agent reports from one that runs an agent.
   const fitting = owned.filter((item) => (item.pane.agent === null) === (kind === "command_done"));
@@ -1041,7 +1076,7 @@ function notifyCommand(line: string): void {
     emitBurst();
     return;
   }
-  const kind = isNotifyKind(word) ? word : NOTIFY_WORDS[word];
+  const kind = isNotifyKind(word) && word !== "preview_ready" ? word : NOTIFY_WORDS[word];
   if (kind) emitNotify(kind, sessionId);
   else console.log(`notify: "${word}" is not one of w, d, c, b or a kind's name`);
 }
@@ -1098,6 +1133,7 @@ function connect(): void {
   ws.on("message", (data, isBinary) => {
     seen();
     if (!isBinary) handleFrame(data.toString());
+    else previews?.handleBinary(new Uint8Array(data as Buffer));
   });
   ws.on("unexpected-response", (_request, response) => {
     console.error(`relay refused the connection: HTTP ${response.statusCode}`);
@@ -1111,6 +1147,7 @@ function connect(): void {
     if (connection === ws) connection = null;
     // With the relay gone nobody is subscribed, which also gives every terminal its own size back.
     for (const terminal of terminals.values()) terminal.stopStreaming();
+    previews?.dropStreams();
     if (stopping) return;
     // Another agent took this one's place: wait the full backoff instead of fighting over the slot.
     const wait = code === CLOSE_REPLACED ? 30_000 : backoffMs;
@@ -1125,11 +1162,12 @@ function stop(): void {
   // To a client this must look like a Mac that went offline, not like terminals that ended.
   for (const terminal of terminals.values()) terminal.abandon();
   transfers?.dispose();
+  void previews?.dispose();
   removeFixture(HOME);
   rmSync(NOTIFY_FILE, { force: true });
   if (process.stdin.isTTY) process.stdin.setRawMode(false);
   connection?.close(1000);
-  setTimeout(() => process.exit(0), 200);
+  setTimeout(() => process.exit(0), previews ? 1500 : 200);
 }
 process.on("SIGINT", stop);
 process.on("SIGTERM", stop);
@@ -1176,5 +1214,57 @@ console.log(
   `notifications: ${process.stdin.isTTY ? "press w (an agent waits), d (an agent has finished), c (a command has finished) or b (a burst) here, or " : ""}write agent_waiting, agent_done, command_done or burst to ${NOTIFY_FILE}`,
 );
 watchNotifyControls();
+
+/** Opens a tab for a preview in the first window, as Hako does in the frontmost one. */
+function openLogTab(name: string, directory: string): LogTab {
+  const sessionId = newId("sess");
+  const terminal = new LogTerminal(sessionId);
+  terminals.set(sessionId, terminal);
+  const pane: Pane = {
+    id: newId("pane"),
+    kind: "terminal",
+    title: name,
+    focused: true,
+    session_id: sessionId,
+    cwd: directory,
+    agent: null,
+  };
+  const created = tab(`Preview: ${name}`, null, [pane]);
+  windows[0].tabs.push(created);
+  workspaceChanged();
+  const handle: LogTab = {
+    tabId: created.id,
+    sessionId,
+    write: (text) => terminal.write(text),
+    onInterrupt: null,
+    close: () => removeTab(windows[0], created),
+  };
+  terminal.onInterrupt = () => handle.onInterrupt?.();
+  return handle;
+}
+
+const previews =
+  process.env.MOCK_PREVIEWS_OFF === "1"
+    ? null
+    : await createPreviewMock(
+        {
+          sendText: (frame) => send(frame),
+          sendBinary: (data) => {
+            if (connection?.readyState === WebSocket.OPEN) connection.send(data);
+          },
+          openLogTab,
+          workspaceChanged,
+        },
+        process.env.MOCK_PREVIEWS_DIR ?? HOME,
+      );
+if (previews) {
+  for (const preview of previews.list()) {
+    console.log(
+      `preview ${preview.id}: ${preview.command} (ports ${preview.ports.map((p) => p.port).join(", ")})`,
+    );
+  }
+} else {
+  console.log("previews are off (MOCK_PREVIEWS_OFF=1)");
+}
 
 connect();
