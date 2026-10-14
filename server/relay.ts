@@ -71,6 +71,8 @@ type Agent = {
 };
 
 const RELAY_PREFIX = "relay";
+/** The most frames and events kept for one session while its `browser.open` is unanswered. */
+const MAX_HELD_FOR_OPEN = 64;
 /** How long the relay waits for the agent's answer to a request of its own (`preview.list`). */
 const OWN_REQUEST_TIMEOUT_MS = 5_000;
 /** A preview that is not in the list is asked about again at most this often. */
@@ -135,6 +137,11 @@ export class Relay {
   private readonly browserOwners = new Map<number, Client>();
   /** Sessions the agent was already told to close because nobody owns them. */
   private readonly orphanBrowsers = new Set<number>();
+  /**
+   * What came for a session nobody owns yet while a `browser.open` is unanswered: an agent may
+   * send a session's first picture or state before its answer to `browser.open`.
+   */
+  private readonly heldForOpen = new Map<number, (string | Uint8Array)[]>();
   /** Sessions the agent was already told to stop streaming because nobody is subscribed. */
   private readonly orphansReported = new Set<string>();
   private agent: Agent | null = null;
@@ -421,6 +428,7 @@ export class Relay {
       }
     }
     this.sendTo(pending.client.socket, { ...frame, id: pending.clientRequestId });
+    if (pending.opensBrowser) this.releaseHeld(frame.ok === true ? bidOf(frame.result) : null);
   }
 
   private handleAgentEvent(frame: Record<string, unknown>): void {
@@ -476,6 +484,7 @@ export class Relay {
     if (bid === null) return;
     const owner = this.browserOwners.get(bid);
     if (owner) this.sendTo(owner.socket, event);
+    else this.hold(bid, JSON.stringify(event));
     if (name === "browser.closed" && owner) {
       this.browserOwners.delete(bid);
       owner.browsers.delete(bid);
@@ -494,7 +503,8 @@ export class Relay {
       this.sendRaw(owner.socket, frame);
       return;
     }
-    if (!this.orphanBrowsers.has(bid) && !this.hasPendingBrowserOpen()) {
+    if (this.hold(bid, frame)) return;
+    if (!this.orphanBrowsers.has(bid)) {
       this.orphanBrowsers.add(bid);
       this.closeBrowser(bid, agent);
     }
@@ -505,6 +515,38 @@ export class Relay {
       if (pending.opensBrowser) return true;
     }
     return false;
+  }
+
+  /** Keeps what came for an unowned session while a `browser.open` waits. False when none does. */
+  private hold(bid: number, data: string | Uint8Array): boolean {
+    if (!this.hasPendingBrowserOpen()) return false;
+    const held = this.heldForOpen.get(bid) ?? [];
+    if (held.length < MAX_HELD_FOR_OPEN) held.push(data);
+    this.heldForOpen.set(bid, held);
+    return true;
+  }
+
+  /**
+   * After an answer to `browser.open` has gone to its client: what was held for the session it
+   * opened follows it there. Held items of other sessions wait for their own answer while another
+   * open is unanswered, and are dropped (closing their sessions) once none is.
+   */
+  private releaseHeld(opened: number | null): void {
+    if (opened !== null) {
+      const owner = this.browserOwners.get(opened);
+      for (const data of this.heldForOpen.get(opened) ?? []) {
+        if (owner) this.sendRaw(owner.socket, data);
+      }
+      this.heldForOpen.delete(opened);
+    }
+    if (this.hasPendingBrowserOpen()) return;
+    for (const bid of this.heldForOpen.keys()) {
+      if (!this.browserOwners.has(bid) && !this.orphanBrowsers.has(bid)) {
+        this.orphanBrowsers.add(bid);
+        this.closeBrowser(bid);
+      }
+    }
+    this.heldForOpen.clear();
   }
 
   /** Asks the agent to close a browser session; its answer is not waited for. */
@@ -664,6 +706,7 @@ export class Relay {
     // The Mac's browser sessions end with its connection.
     this.browserOwners.clear();
     this.orphanBrowsers.clear();
+    this.heldForOpen.clear();
     this.orphansReported.clear();
     if (wasAnnounced) this.broadcast(this.statusEvent());
   }

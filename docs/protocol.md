@@ -2129,7 +2129,8 @@ type InputEvent =
 - `mouse` comes from a desktop browser. `button` and `modifiers` are as the DevTools protocol has
   them: `modifiers` is a bit set of Alt 1, Ctrl 2, Meta (Cmd) 4 and Shift 8. `clicks` is the click
   count (2 for the second press of a double click); `dx` and `dy` are the wheel's deltas in CSS
-  pixels, 0 for the other actions.
+  pixels, 0 for the other actions. A `move` names the button held during it (`"left"` while
+  dragging, else `"none"`), which the Mac passes on as `buttons: 1`, so a drag selects text.
 - `scroll` is a wheel event at that point: `dx` and `dy` in CSS pixels, positive to move the page's
   content up or left, as a wheel's deltas are. It is how a drag scrolls in a viewport without
   touch, and how the client turns the speed of a flick into a few decaying steps afterwards.
@@ -2210,6 +2211,9 @@ and "not installed" or "not found" in it.
 
 - It records which client each session belongs to when the agent answers that client's
   `browser.open`, and forgets it on that client's `browser.close` and on `browser.closed`.
+- An agent should answer `browser.open` before it sends anything of the new session. Frames and
+  events for a session nobody owns that arrive while a `browser.open` is unanswered are held (at
+  most 64 per session) and passed to the session's client right after the answer.
 - Frames of type `0x03` go to that client only. A frame for a session nobody owns (its client left,
   or gave up waiting for `browser.open`) makes the relay send the agent `browser.close` for it,
   once.
