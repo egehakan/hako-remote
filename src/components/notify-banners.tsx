@@ -1,5 +1,6 @@
 import type { NotifyKind } from "@shared/notify";
-import { CheckIcon, HandIcon, SquareTerminalIcon, XIcon } from "lucide-react";
+import { notifySubject } from "@shared/notify";
+import { AppWindowIcon, CheckIcon, HandIcon, SquareTerminalIcon, XIcon } from "lucide-react";
 import { useSyncExternalStore } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,6 +13,7 @@ const KIND: Record<NotifyKind, { label: string; variant: "waiting" | "done" | "o
   agent_waiting: { label: "Waiting for you", variant: "waiting" },
   agent_done: { label: "Done", variant: "done" },
   command_done: { label: "Command", variant: "outline" },
+  preview_ready: { label: "Preview", variant: "done" },
 };
 
 function KindIcon({ kind }: { kind: NotifyKind }) {
@@ -22,6 +24,8 @@ function KindIcon({ kind }: { kind: NotifyKind }) {
       return <CheckIcon data-icon="inline-start" />;
     case "command_done":
       return <SquareTerminalIcon data-icon="inline-start" />;
+    case "preview_ready":
+      return <AppWindowIcon data-icon="inline-start" />;
   }
 }
 
@@ -61,13 +65,17 @@ function BannerCard({ banner }: { banner: Banner }) {
           "w-[3px] shrink-0",
           notification.kind === "agent_waiting"
             ? "bg-lid"
-            : notification.kind === "agent_done"
+            : notification.kind === "agent_done" || notification.kind === "preview_ready"
               ? "bg-settled"
               : "bg-input",
         )}
       />
       <a
-        href={routes.terminal(notification.session_id)}
+        href={
+          notification.preview_id !== undefined
+            ? routes.preview(notification.preview_id)
+            : routes.terminal(notifySubject(notification))
+        }
         className="flex min-w-0 flex-1 flex-col gap-1 py-2.5 pr-1 pl-3 outline-none hover:bg-accent/40 focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset"
         onClick={() => banners.dismiss(banner.id)}
       >
@@ -76,7 +84,9 @@ function BannerCard({ banner }: { banner: Banner }) {
             <KindIcon kind={notification.kind} />
             {kind.label}
           </Badge>
-          <span className="sr-only">Open the terminal:</span>
+          <span className="sr-only">
+            {notification.preview_id !== undefined ? "Open the preview:" : "Open the terminal:"}
+          </span>
         </span>
         <span className="truncate text-[0.9375rem] leading-5 font-medium">
           {notification.title}

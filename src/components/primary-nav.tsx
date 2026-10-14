@@ -1,7 +1,14 @@
-import { FolderIcon, GitBranchIcon, SquareTerminalIcon, UserRoundIcon } from "lucide-react";
+import {
+  AppWindowIcon,
+  FolderIcon,
+  GitBranchIcon,
+  SquareTerminalIcon,
+  UserRoundIcon,
+} from "lucide-react";
 import type { ComponentType } from "react";
 import { BoxMark } from "@/components/box-mark";
 import { useConnection } from "@/lib/hooks";
+import { usePreviews } from "@/lib/previews/store";
 import { type Area, routes } from "@/lib/route";
 import { cn } from "@/lib/utils";
 
@@ -16,6 +23,7 @@ const ITEMS: Item[] = [
   { area: "terminals", label: "Terminals", short: "Terminals", icon: SquareTerminalIcon },
   { area: "files", label: "Files", short: "Files", icon: FolderIcon },
   { area: "git", label: "Source control", short: "Source", icon: GitBranchIcon },
+  { area: "previews", label: "Previews", short: "Previews", icon: AppWindowIcon },
   { area: "account", label: "Account", short: "Account", icon: UserRoundIcon },
 ];
 
@@ -28,6 +36,7 @@ type PrimaryNavProps = {
 };
 
 const HOME: Record<Area, string> = {
+  previews: routes.previews,
   terminals: routes.workspace,
   files: routes.files,
   git: routes.git,
@@ -38,11 +47,15 @@ const HOME: Record<Area, string> = {
 export function PrimaryNav({ area, resume, hiddenOnPhone }: PrimaryNavProps) {
   const { link, agent } = useConnection();
   const online = link === "open" && agent?.online === true;
+  const { previews } = usePreviews();
+  const running = online
+    ? (previews ?? []).filter((preview) => preview.status === "running").length
+    : 0;
   return (
     <nav
       aria-label="Areas"
       className={cn(
-        "shrink-0 bg-background narrow:order-last narrow:grid narrow:grid-cols-4 narrow:border-t narrow:pr-[env(safe-area-inset-right)] narrow:pb-[env(safe-area-inset-bottom)] narrow:pl-[env(safe-area-inset-left)]",
+        "shrink-0 bg-background narrow:order-last narrow:grid narrow:grid-cols-5 narrow:border-t narrow:pr-[env(safe-area-inset-right)] narrow:pb-[env(safe-area-inset-bottom)] narrow:pl-[env(safe-area-inset-left)]",
         "wide:flex wide:min-h-0 wide:w-[4.75rem] wide:flex-col wide:items-stretch wide:gap-1 wide:border-r wide:px-1.5 wide:pt-[max(0.75rem,env(safe-area-inset-top))] wide:pb-[max(0.75rem,env(safe-area-inset-bottom))]",
         hiddenOnPhone && "narrow:hidden",
       )}
@@ -62,7 +75,11 @@ export function PrimaryNav({ area, resume, hiddenOnPhone }: PrimaryNavProps) {
             // A second tap on the area you are in goes to its start, as a tab bar does.
             href={active ? HOME[item.area] : (resume[item.area] ?? HOME[item.area])}
             aria-current={active ? "page" : undefined}
-            aria-label={item.label}
+            aria-label={
+              item.area === "previews" && running > 0
+                ? `${item.label}, ${running} running`
+                : item.label
+            }
             className={cn(
               "relative flex min-h-14 flex-col items-center justify-center gap-1 rounded-lg text-[0.6875rem] leading-none font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring/70 focus-visible:ring-inset wide:min-h-[3.75rem]",
               active ? "text-lid" : "text-muted-foreground hover:text-foreground",
@@ -76,7 +93,17 @@ export function PrimaryNav({ area, resume, hiddenOnPhone }: PrimaryNavProps) {
                 className="absolute inset-x-5 top-0 h-0.5 rounded-full bg-amber wide:hidden"
               />
             ) : null}
-            <Icon className="size-[1.375rem]" />
+            <span className="relative">
+              <Icon className="size-[1.375rem]" />
+              {item.area === "previews" && running > 0 ? (
+                <span
+                  aria-hidden="true"
+                  className="absolute -top-1.5 -right-2.5 min-w-4 rounded-full bg-settled px-1 text-center font-mono text-[0.625rem] leading-4 font-bold text-background tabular-nums"
+                >
+                  {running}
+                </span>
+              ) : null}
+            </span>
             <span aria-hidden="true" className="wide:hidden">
               {item.label}
             </span>

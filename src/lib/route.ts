@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { isCommitId, isValidRepoPath } from "../../shared/git.ts";
+import { isPreviewId } from "../../shared/previews.ts";
 import { decodePath, encodePath } from "./files/paths";
 
 export type Route =
@@ -22,9 +23,13 @@ export type Route =
   | { name: "commit"; repo: string; commit: string }
   /** One file's diff in one commit. */
   | { name: "commitFile"; repo: string; commit: string; file: string }
+  /** The previews the Mac runs. */
+  | { name: "previews" }
+  /** One preview, shown in the viewer. */
+  | { name: "preview"; id: string }
   | { name: "account" };
 
-export type Area = "terminals" | "files" | "git" | "account";
+export type Area = "terminals" | "files" | "git" | "previews" | "account";
 
 export function areaOf(route: Route): Area {
   switch (route.name) {
@@ -42,6 +47,9 @@ export function areaOf(route: Route): Area {
     case "commit":
     case "commitFile":
       return "git";
+    case "previews":
+    case "preview":
+      return "previews";
     case "account":
       return "account";
   }
@@ -51,6 +59,11 @@ export function parseRoute(hash: string): Route {
   const path = hash.replace(/^#\/?/, "");
   if (path === "account") return { name: "account" };
   if (path === "git") return { name: "git" };
+  if (path === "previews") return { name: "previews" };
+  if (path.startsWith("p/")) {
+    const id = path.slice(2);
+    return isPreviewId(id) ? { name: "preview", id } : { name: "previews" };
+  }
   if (path.startsWith("git/r/")) return parseRepoRoute(path.slice(5));
   if (path === "files") return { name: "files" };
   if (path.startsWith("tab/")) return { name: "tab", tabId: decodeURIComponent(path.slice(4)) };
@@ -144,6 +157,8 @@ export const routes = {
   workspace: "#/",
   account: "#/account",
   git: "#/git",
+  previews: "#/previews",
+  preview: (id: string) => `#/p/${id}`,
   repo: (repo: string) => `#/git/r${encodePath(repo)}`,
   diff: (repo: string, file: string) => `#/git/r${encodePath(repo)}?f=${encodeURIComponent(file)}`,
   commit: (repo: string, commit: string) => `#/git/r${encodePath(repo)}?c=${commit}`,

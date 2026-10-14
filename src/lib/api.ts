@@ -1,6 +1,7 @@
 // The relay's HTTP API (docs/protocol.md, "HTTP API").
 
 import type { DeviceState, NotifyKind } from "@shared/notify";
+import type { PreviewTicket } from "@shared/previews";
 
 export type ApiError =
   | { kind: "invalid_credentials"; remaining: number | null }
@@ -79,6 +80,8 @@ export const api = {
   pushSettings: (change: PrefsChange) => call<DeviceState>("/api/push/settings", change),
   pushUnsubscribe: () => call<{ ok: true }>("/api/push/unsubscribe", {}),
   pushTest: () => call<{ ok: true }>("/api/push/test", {}),
+  previewTicket: (id: string, path: string) =>
+    call<PreviewTicket>("/api/previews/ticket", { id, path }),
 };
 
 export type PrefsChange = { muted?: boolean; kinds?: Partial<Record<NotifyKind, boolean>> };

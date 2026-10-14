@@ -40,6 +40,7 @@ import { TabDetail } from "@/screens/tab-detail";
 
 // The terminal brings xterm.js with it, which the login and the workspace list do not need.
 const TerminalScreen = lazy(() => import("@/screens/terminal"));
+const PreviewsArea = lazy(() => import("@/screens/previews"));
 
 const LOOSE = "loose";
 /** How long a folder that has just been added stays pointed out in the list. */
@@ -182,6 +183,7 @@ export function Shell({ email, onLoggedOut }: ShellProps) {
           resume={resume.current}
           hiddenOnPhone={
             route.name === "terminal" ||
+            route.name === "preview" ||
             route.name === "file" ||
             route.name === "diff" ||
             route.name === "commitFile"
@@ -291,6 +293,12 @@ export function Shell({ email, onLoggedOut }: ShellProps) {
           route.name === "commit" ||
           route.name === "commitFile" ? (
           <SourceControlArea route={route} />
+        ) : route.name === "previews" || route.name === "preview" ? (
+          <LoadBoundary>
+            <Suspense fallback={<TerminalLoading />}>
+              <PreviewsArea route={route} />
+            </Suspense>
+          </LoadBoundary>
         ) : (
           <div className="min-h-0 overflow-y-auto overscroll-contain narrow:flex-1 wide:col-span-2 wide:border-l">
             <AccountScreen email={email} onLoggedOut={onLoggedOut} />

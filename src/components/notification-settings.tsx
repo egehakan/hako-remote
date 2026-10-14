@@ -24,6 +24,11 @@ const KINDS: { kind: NotifyKind; label: string; detail: string }[] = [
     label: "A long command has finished",
     detail: "A build, a test run or anything else that took a while.",
   },
+  {
+    kind: "preview_ready",
+    label: "A preview is ready",
+    detail: "An app Claude Code started on your Mac answers; tapping opens it under Previews.",
+  },
 ];
 
 type Status = {

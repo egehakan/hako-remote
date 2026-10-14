@@ -9,9 +9,11 @@ import {
   type NotifyEvent,
   type NotifyKind,
   type NotifyPrefs,
+  notifySubject,
   notifyTag,
   readNotify,
 } from "@shared/notify";
+import { isPreviewId } from "@shared/previews";
 import { api, type PrefsChange } from "./api";
 import { relay } from "./connection";
 import { navigate, parseRoute, routes } from "./route";
@@ -86,6 +88,7 @@ function readPrefs(): NotifyPrefs {
         agent_waiting: read("agent_waiting"),
         agent_done: read("agent_done"),
         command_done: read("command_done"),
+        preview_ready: read("preview_ready"),
       },
     };
   } catch {
@@ -445,7 +448,16 @@ export const arrivals = {
   },
 };
 
-function openFromNotification(target: { session_id?: unknown; tab_id?: unknown }): void {
+function openFromNotification(target: {
+  session_id?: unknown;
+  tab_id?: unknown;
+  preview_id?: unknown;
+}): void {
+  if (isPreviewId(target.preview_id)) {
+    banners.dismissSubject(`preview:${target.preview_id}`);
+    navigate(routes.preview(target.preview_id));
+    return;
+  }
   if (typeof target.session_id !== "string" || target.session_id === "") return;
   arrival = {
     sessionId: target.session_id,
@@ -520,6 +532,10 @@ export const banners = {
   dismissSession(sessionId: string): void {
     setBanners(shownBanners.filter((banner) => banner.notification.session_id !== sessionId));
   },
+  /** Takes away the banners about one terminal or preview (`notifySubject`). */
+  dismissSubject(subject: string): void {
+    setBanners(shownBanners.filter((banner) => notifySubject(banner.notification) !== subject));
+  },
   clear(): void {
     setBanners([]);
   },
@@ -536,11 +552,11 @@ relay.on("notify", (data) => {
   if (document.visibilityState !== "visible") return;
   const route = parseRoute(window.location.hash);
   if (route.name === "terminal" && route.sessionId === notification.session_id) return;
+  if (route.name === "preview" && route.id === notification.preview_id) return;
   const banner = { id: nextBannerId++, notification };
-  // As on the device, a terminal has one notification: the newest.
-  const others = shownBanners.filter(
-    (shown) => shown.notification.session_id !== notification.session_id,
-  );
+  // As on the device, a terminal (or a preview) has one notification: the newest.
+  const subject = notifySubject(notification);
+  const others = shownBanners.filter((shown) => notifySubject(shown.notification) !== subject);
   setBanners([banner, ...others].slice(0, BANNERS_SHOWN));
   banners.release(banner.id);
 });

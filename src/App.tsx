@@ -6,6 +6,7 @@ import { clearOperations } from "@/lib/files/operations";
 import { clearFiles } from "@/lib/files/store";
 import { clearGit } from "@/lib/git/store";
 import { notifications } from "@/lib/notifications";
+import { previewsStore } from "@/lib/previews/store";
 import { navigate, routes } from "@/lib/route";
 import { clearTransfers } from "@/lib/transfers/store";
 import { workspaceStore } from "@/lib/workspace";
@@ -24,6 +25,7 @@ export function App() {
     clearOperations();
     clearGit();
     clearTransfers();
+    previewsStore.clear();
     navigate(routes.workspace, { replace: true });
     setAuth({ state: "anonymous" });
   }, []);

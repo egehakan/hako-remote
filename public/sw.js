@@ -1,5 +1,5 @@
 // Hako's service worker. It does two things: it shows the notifications the relay pushes, and it
-// opens the terminal a notification is about when the notification is tapped.
+// opens the terminal (or the preview) a notification is about when the notification is tapped.
 //
 // It has no `fetch` handler, on purpose. Nothing is cached and nothing is answered from here:
 // every page, script and request goes to the network exactly as it would without this worker, so
@@ -49,6 +49,7 @@ self.addEventListener("push", (event) => {
       kind: payload ? text(payload.kind) : null,
       session_id: payload ? text(payload.session_id) : null,
       tab_id: payload ? text(payload.tab_id) : null,
+      ...(payload && text(payload.preview_id) ? { preview_id: text(payload.preview_id) } : {}),
     },
   };
   event.waitUntil(self.registration.showNotification(title, options));
@@ -56,6 +57,8 @@ self.addEventListener("push", (event) => {
 
 function targetOf(notification) {
   const data = notification.data ?? {};
+  const previewId = text(data.preview_id);
+  if (previewId !== null && /^[a-z0-9-]{1,40}$/.test(previewId)) return { preview_id: previewId };
   const sessionId = text(data.session_id);
   return sessionId === null ? null : { session_id: sessionId, tab_id: text(data.tab_id) };
 }
@@ -82,7 +85,12 @@ async function openApp(target) {
     }
     return;
   }
-  const address = target === null ? "/" : `/#/t/${encodeURIComponent(target.session_id)}`;
+  const address =
+    target === null
+      ? "/"
+      : target.preview_id
+        ? `/#/p/${target.preview_id}`
+        : `/#/t/${encodeURIComponent(target.session_id)}`;
   await self.clients.openWindow(address);
 }
 
