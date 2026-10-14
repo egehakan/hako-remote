@@ -562,10 +562,34 @@ export function createBrowserMock(host: BrowserHost) {
       if (found.session.active !== found.tab) void activate(found.session, found.tab);
       host.sendEvent("browser.dialog", {
         bid: found.session.bid,
+        tab: found.tab.targetId,
         kind: params.type,
         message: params.message ?? "",
         default: params.defaultPrompt ?? "",
       });
+      // The lab's dialogs that go away by themselves: one whose page moves on, as a page does when
+      // something else navigates it, and one answered on the Mac.
+      const message = String(params.message ?? "");
+      const tab = found.tab;
+      if (message.includes("this page moves on")) {
+        setTimeout(() => {
+          void connection
+            .send("Page.navigate", { url: new URL("/long", tab.url).href }, tab.cdpSession)
+            .catch(() => {});
+        }, 2000);
+      } else if (message.includes("answered on the Mac")) {
+        setTimeout(() => {
+          void connection
+            .send("Page.handleJavaScriptDialog", { accept: true }, tab.cdpSession)
+            .catch(() => {});
+        }, 2000);
+      }
+    });
+    connection.on("Page.javascriptDialogClosed", (_params, cdpSession) => {
+      const found = tabOf(cdpSession);
+      if (!found) return;
+      if (found.session.dialogTab === found.tab) found.session.dialogTab = null;
+      host.sendEvent("browser.dialog_closed", { bid: found.session.bid, tab: found.tab.targetId });
     });
     connection.on("Page.fileChooserOpened", (params, cdpSession) => {
       const found = tabOf(cdpSession);

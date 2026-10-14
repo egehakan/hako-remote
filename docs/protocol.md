@@ -2047,8 +2047,9 @@ as a second, faster way to look at a preview.
 | `browser.copy` | `{ bid }` | `{ text }` |
 
 Notifications from the client: `browser.ack` `{ bid, frame }` and `browser.input` `{ bid, events }`.
-Events from the agent: `browser.state`, `browser.dialog`, `browser.picker`, `browser.file_chooser`,
-`browser.download`, `browser.console` and `browser.closed`, each with the session's `bid` in its data.
+Events from the agent: `browser.state`, `browser.dialog`, `browser.dialog_closed`, `browser.picker`,
+`browser.file_chooser`, `browser.download`, `browser.console` and `browser.closed`, each with the
+session's `bid` in its data.
 
 ```ts
 type Viewport = {
@@ -2153,9 +2154,18 @@ the session active; `browser.close_tab` closes one. Closing the last tab ends th
 
 #### Dialogs, pickers, files, downloads, copy and the console
 
-- **Dialogs.** Event `browser.dialog` `{ bid, kind, message, default }`, `kind` one of `"alert"`,
-  `"confirm"`, `"prompt"`, `"beforeunload"`; `default` is a prompt's default text, else `""`.
-  Answered with `browser.dialog_reply` `{ bid, accept, text }`.
+- **Dialogs.** Event `browser.dialog` `{ bid, tab, kind, message, default }`, `kind` one of
+  `"alert"`, `"confirm"`, `"prompt"`, `"beforeunload"`; `default` is a prompt's default text, else
+  `""`. `tab` (an addition; older apps leave it out, and the client then takes the active tab) is
+  the tab that shows the dialog. Answered with `browser.dialog_reply` `{ bid, accept, text }`.
+  - Event `browser.dialog_closed` `{ bid, tab }` (an addition) when a tab's dialog has gone without
+    a reply from this client: the page navigated away, the tab closed, or it was answered on the
+    Mac. The client closes that tab's dialog. Sent after a `browser.dialog_reply` too, which the
+    client ignores, having closed the dialog already.
+  - Independently of that event, the client closes a dialog when `browser.state` shows its tab at
+    another address, or no longer has the tab. For the first second after a dialog arrives a new
+    address is taken as the dialog's own page instead, since a page that opens a dialog as it loads
+    may have its state sent just after the dialog.
 - **Pickers.** A `<select>` and the date, time and colour pickers are not drawn into screencast
   frames, so a small script added to every `localhost` page (`Page.addScriptToEvaluateOnNewDocument`
   in an isolated world) reports the one the owner opens, and the phone shows its own picker.

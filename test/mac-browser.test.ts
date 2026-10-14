@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { BrowserDownload, BrowserFrame } from "../shared/browser.ts";
+import type { BrowserDownload, BrowserFrame, BrowserState } from "../shared/browser.ts";
+import {
+  DIALOG_SETTLE_MS,
+  dialogAfterClosed,
+  dialogAfterState,
+  openDialog,
+} from "../src/lib/browser/dialogs.ts";
 import {
   DOWNLOAD_STALL_MS,
   markStalled,
@@ -334,4 +340,84 @@ test("viewport: Fit rotated is this screen turned a quarter, and rotating again 
   assert.deepEqual(fitSize(rotated, { width: 844, height: 340 }), { width: 340, height: 844 });
   assert.equal(viewportSize(rotated), null);
   assert.deepEqual(fitSize({ ...rotated, rotated: false }, stage), fitSize(DEFAULT_CHOICE, stage));
+});
+
+// Dialogs
+
+const browserState = (
+  tab: string,
+  url: string,
+  other = "http://localhost:3000/b",
+): BrowserState => ({
+  bid: 7,
+  tab,
+  url,
+  title: "",
+  loading: false,
+  can_back: false,
+  can_forward: false,
+  tabs: [
+    { id: "a", url: tab === "a" ? url : "http://localhost:3000/a", title: "", active: tab === "a" },
+    { id: "b", url: tab === "b" ? url : other, title: "", active: tab === "b" },
+  ],
+});
+const alertIn = (tab?: string) => ({
+  bid: 7,
+  ...(tab ? { tab } : {}),
+  kind: "alert" as const,
+  message: "Hi",
+  default: "",
+});
+
+test("dialogs: dialog_closed closes the dialog of its tab only", () => {
+  const state = browserState("a", "http://localhost:3000/a");
+  const dialog = openDialog(alertIn("b"), state, 0);
+  assert.equal(dialogAfterClosed(dialog, { bid: 7, tab: "a" }), dialog);
+  assert.equal(dialogAfterClosed(dialog, { bid: 7, tab: "b" }), null);
+  assert.equal(dialogAfterClosed(null, { bid: 7, tab: "b" }), null);
+});
+
+test("dialogs: a new address for the dialog's tab closes it, once the dialog has settled", () => {
+  const state = browserState("a", "http://localhost:3000/a");
+  // An older app names no tab: the dialog is the active tab's.
+  const dialog = openDialog(alertIn(), state, 0);
+  assert.equal(dialog.tab, "a");
+  const later = DIALOG_SETTLE_MS + 1;
+  assert.equal(
+    dialogAfterState(dialog, browserState("a", "http://localhost:3000/a"), later),
+    dialog,
+  );
+  // Another tab moving does not matter.
+  assert.equal(
+    dialogAfterState(dialog, browserState("a", "http://localhost:3000/a", "http://x.test/"), later),
+    dialog,
+  );
+  assert.equal(
+    dialogAfterState(dialog, browserState("a", "http://localhost:3000/next"), later),
+    null,
+  );
+  // A dialog in a tab that is not shown follows that tab's entry, and its tab closing closes it.
+  const inB = openDialog(alertIn("b"), state, 0);
+  assert.equal(dialogAfterState(inB, browserState("a", "http://localhost:3000/a"), later), inB);
+  assert.equal(
+    dialogAfterState(inB, { ...state, tabs: state.tabs.filter((tab) => tab.id !== "b") }, later),
+    null,
+  );
+});
+
+test("dialogs: a page that opens a dialog as it loads keeps it when its state comes just after", () => {
+  // The dialog arrives before the state of the page that opened it.
+  const dialog = openDialog(alertIn("a"), browserState("a", "http://localhost:3000/a"), 0);
+  const settled = dialogAfterState(dialog, browserState("a", "http://localhost:3000/loaded"), 50);
+  assert.ok(settled);
+  assert.equal(settled.url, "http://localhost:3000/loaded");
+  const later = DIALOG_SETTLE_MS + 100;
+  assert.equal(
+    dialogAfterState(settled, browserState("a", "http://localhost:3000/loaded"), later),
+    settled,
+  );
+  assert.equal(
+    dialogAfterState(settled, browserState("a", "http://localhost:3000/gone"), later),
+    null,
+  );
 });

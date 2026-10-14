@@ -48,7 +48,7 @@ export function PageDialog({
   origin,
   onReply,
 }: {
-  dialog: BrowserDialog | null;
+  dialog: Pick<BrowserDialog, "kind" | "message" | "default"> | null;
   /** Whose dialog it is, as a browser names it. */
   origin: string;
   onReply: (accept: boolean, text: string) => void;
@@ -56,9 +56,11 @@ export function PageDialog({
   const [text, setText] = useState("");
   const field = useRef<HTMLInputElement>(null);
   const ok = useRef<HTMLButtonElement>(null);
+  // Keyed by what is shown, so the dialog learning more about its tab keeps the typed answer.
+  const shown = dialog === null ? null : `${dialog.kind}\n${dialog.default}\n${dialog.message}`;
   useEffect(() => {
     if (dialog) setText(dialog.default);
-  }, [dialog]);
+  }, [shown]);
   const kind = dialog?.kind ?? "alert";
   const leaving = kind === "beforeunload";
   return (

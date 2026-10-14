@@ -181,7 +181,9 @@ sentence and copy it.</p>
 <button id="popup">Open a pop-up</button> <span id="popup-result"></span></p>
 <h2>Dialogs</h2>
 <p><button id="alert">Alert</button> <button id="confirm">Confirm</button>
-<button id="prompt">Prompt</button></p>
+<button id="prompt">Prompt</button>
+<button id="alert-moves-on">Alert, then the page moves on</button>
+<button id="alert-on-mac">Alert answered on the Mac</button></p>
 <pre id="dialog-result">no dialog yet</pre>
 <h2>Pickers</h2>
 <p><label>Fruit <select id="fruit"><option value="apple">Apple</option><option value="pear" selected>Pear</option>
@@ -211,6 +213,8 @@ const show = (id, text) => { document.getElementById(id).textContent = text; };
 document.getElementById("popup").onclick = () => window.open("/popup", "lab-popup", "width=420,height=520");
 document.getElementById("alert").onclick = () => { alert("Hello from the lab"); show("dialog-result", "alert closed"); };
 document.getElementById("confirm").onclick = () => show("dialog-result", "confirm: " + confirm("Go ahead?"));
+document.getElementById("alert-moves-on").onclick = () => alert("In two seconds this page moves on.");
+document.getElementById("alert-on-mac").onclick = () => { alert("In two seconds this is answered on the Mac."); show("dialog-result", "answered on the Mac"); };
 document.getElementById("prompt").onclick = () => show("dialog-result", "prompt: " + JSON.stringify(prompt("Your name?", "Ada")));
 const pickers = () => show("picker-result", [
   "fruit=" + document.getElementById("fruit").value,

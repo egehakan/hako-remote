@@ -79,7 +79,16 @@ export type BrowserInputParams = { bid: number; events: BrowserInputEvent[] };
 
 export type DialogKind = "alert" | "confirm" | "prompt" | "beforeunload";
 /** Event `browser.dialog`. */
-export type BrowserDialog = { bid: number; kind: DialogKind; message: string; default: string };
+export type BrowserDialog = {
+  bid: number;
+  /** The tab that shows it; absent from older apps, whose dialogs are in the active tab. */
+  tab?: string;
+  kind: DialogKind;
+  message: string;
+  default: string;
+};
+/** Event `browser.dialog_closed`: the tab's dialog went away without this client's reply. */
+export type BrowserDialogClosed = { bid: number; tab: string };
 
 export type PickerOption = {
   label: string;

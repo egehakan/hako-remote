@@ -5,6 +5,7 @@
 import type {
   BrowserConsole,
   BrowserDialog,
+  BrowserDialogClosed,
   BrowserDownload,
   BrowserFileChooser,
   BrowserFrame,
@@ -15,6 +16,7 @@ import type {
   BrowserViewport,
 } from "@shared/browser";
 import { relay, RpcFailure } from "@/lib/connection";
+import { dialogAfterClosed, dialogAfterState, type OpenDialog, openDialog } from "./dialogs";
 import { type DownloadItem, markStalled, mergeDownload, nextStallAt } from "./downloads";
 import { FramePipeline } from "./frames";
 
@@ -43,7 +45,7 @@ export type SessionSnapshot = {
   state: BrowserState | null;
   /** The CSS size of the picture on screen, null before the first one. */
   picture: { width: number; height: number } | null;
-  dialog: BrowserDialog | null;
+  dialog: OpenDialog | null;
   picker: BrowserPicker | null;
   chooser: BrowserFileChooser | null;
   downloads: DownloadItem[];
@@ -139,10 +141,15 @@ export class MacBrowserSession {
         if (!mine(data)) return;
         const state = data as BrowserState;
         if (state.url) this.lastUrl = state.url;
-        this.set({ state });
+        this.set({ state, dialog: dialogAfterState(this.snapshot.dialog, state, Date.now()) });
       }),
       relay.on("browser.dialog", (data) => {
-        if (mine(data)) this.set({ dialog: data as BrowserDialog });
+        if (!mine(data)) return;
+        this.set({ dialog: openDialog(data as BrowserDialog, this.snapshot.state, Date.now()) });
+      }),
+      relay.on("browser.dialog_closed", (data) => {
+        if (!mine(data)) return;
+        this.set({ dialog: dialogAfterClosed(this.snapshot.dialog, data as BrowserDialogClosed) });
       }),
       relay.on("browser.picker", (data) => {
         if (mine(data)) this.set({ picker: data as BrowserPicker });

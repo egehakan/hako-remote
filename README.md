@@ -244,11 +244,11 @@ phone, and everything works:
   `localhost:3000`), the tabs the page opened (a `target=_blank` link or a sign-in pop-up opens in
   front and returns to the page that opened it when it closes) and the console, which lists what
   the page logged and the requests to it that failed, with the number of errors on its button.
-- **The page's own windows.** `alert`, `confirm` and `prompt` appear as the phone's own dialogs,
-  `<select>`, date, time and colour fields open the phone's own pickers, a file input takes files
-  from the phone (they go to the uploads area on the Mac first), and a download appears at the
-  bottom with "Save to phone" once it has finished on the Mac, or says that it was cancelled or
-  failed there.
+- **The page's own windows.** `alert`, `confirm` and `prompt` appear as the phone's own dialogs
+  (and go away when the page moves on without an answer), `<select>`, date, time and colour fields
+  open the phone's own pickers, a file input takes files from the phone (they go to the uploads
+  area on the Mac first), and a download appears at the bottom with "Save to phone" once it has
+  finished on the Mac, or says that it was cancelled or failed there.
 - **Viewport.** The same sizes as below; Fit uses this screen's size and pixel ratio, and Rotate
   turns it to this screen's landscape size (or portrait, held sideways), scaled down to fit.
 - **Open URL…** at the top of Previews opens any address in the Mac browser, without a preview.
@@ -448,7 +448,8 @@ The mock agent's **Mac browser** is a real headless Chrome on this computer (fro
 `/Applications/Google Chrome.app`), started on the first viewer with a throwaway profile and a
 debugging port of its own, and stopped with the mock agent; it never touches the Chrome you use.
 A third preview, "Browser lab", has something for everything the Mac browser carries: links, a
-long page, a form, a new tab and a pop-up, `alert`, `confirm` and `prompt`, a select and date,
+long page, a form, a new tab and a pop-up, `alert`, `confirm` and `prompt` (and two alerts that go
+away by themselves: one whose page the mock agent navigates, one it answers), a select and date,
 time and colour fields, a file input, downloads (a quick one, a slow one, one whose connection
 breaks and one the mock agent cancels after two seconds, as the owner might on the Mac), and
 console errors. `MOCK_BROWSER_OFF=1` leaves the Mac browser out, as an older Hako would, and
