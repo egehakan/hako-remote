@@ -11,10 +11,10 @@ phone keyboard lacks. You can also browse the folders of your projects, read a f
 colours, make a small edit and save it, save any file to your phone and put files from your phone
 into a folder on the Mac; you can hand Claude Code a picture from your phone in a terminal; and you
 can see what changed in every repository in those folders, read the diffs, commit, push and pull,
-and merge one branch into another. You can try the web app Claude Code just changed, served by its
-dev server on the Mac, inside this app at the size of any phone, tablet or computer. And your phone
-is told when an agent is waiting for you or has finished, when a long command is done, and when a
-preview is ready.
+and merge one branch into another. You can try the web app Claude Code just changed, at the size of
+any phone, tablet or computer: in a Chrome on the Mac that you watch and drive from the phone, or
+served by its dev server in the phone's own browser. And your phone is told when an agent is
+waiting for you or has finished, when a long command is done, and when a preview is ready.
 
 Hako Remote is a companion to [Hako](https://github.com/egehakan/hako), a personal terminal that is
 based on Warp. Neither project is affiliated with, or endorsed by, Warp.
@@ -226,8 +226,33 @@ but not branches and the graph yet says so in their place, and the rest works as
 
 When Claude Code on the Mac starts the app it changed (the `preview` skill does this in a Hako
 tab), the app appears under **Previews**: its name, its folder, its ports and whether it runs, with
-Stop, Restart, Remove and "Show logs", which opens the tab its dev server prints to. Open shows it
-in this browser ("Phone browser"), served by the dev server on the Mac:
+Stop, Restart, Remove and "Show logs", which opens the tab its dev server prints to.
+
+Open shows it in the **Mac browser**: a Google Chrome that Hako runs out of sight on the Mac,
+against `localhost`, exactly as you would test the app there. The phone shows a live picture of
+the page and sends your input, so backends on other ports, cookies, CORS and "Sign in with Google"
+with the project's own localhost addresses all work unchanged. It is slower than a browser on the
+phone, and everything works:
+
+- **Touch.** A tap taps, a drag scrolls (a flick keeps going), holding a finger is a long press,
+  and two fingers zoom the picture here without touching the page. The keyboard key brings up the
+  phone's keyboard for the field you tapped; typing, pasting and dictation go to the page, and a row
+  of keys adds Tab, Esc, the arrows, ⌘A, ⌘C (copies the page's selection to the phone), ⌘V (pastes
+  the phone's clipboard) and ⌘Z. In a computer's browser the mouse, the wheel and the keyboard go
+  to the page directly; Ctrl and the wheel (a trackpad's pinch) zoom the picture.
+- **A browser's controls.** Back, forward, reload, the address (type any address, or
+  `localhost:3000`), the tabs the page opened (a `target=_blank` link or a sign-in pop-up opens in
+  front and returns to the page that opened it when it closes) and the console, which lists what
+  the page logged and the requests to it that failed, with the number of errors on its button.
+- **The page's own windows.** `alert`, `confirm` and `prompt` appear as the phone's own dialogs,
+  `<select>`, date, time and colour fields open the phone's own pickers, a file input takes files
+  from the phone (they go to the uploads area on the Mac first), and a download appears at the
+  bottom with "Save to phone".
+- **Viewport.** The same sizes as below; Fit uses this screen's size and pixel ratio.
+- **Open URL…** at the top of Previews opens any address in the Mac browser, without a preview.
+
+The choice of browser is in the viewport menu and is remembered for each preview. The other one,
+the **Phone browser**, runs the page in this browser, served by the dev server on the Mac:
 
 - **A browser's controls.** Back, forward, reload, and the address, which you can tap to go to
   another path. The triangle counts the errors and warnings the page logged, and opens them.
@@ -247,9 +272,11 @@ in this browser ("Phone browser"), served by the dev server on the Mac:
   which gives this browser a preview cookie for 12 hours, bound to your login. Anyone else gets
   "Open this preview from Hako".
 
-The relay needs a wildcard DNS name and certificate for this: `*.<your domain>` pointing at the
-same service as `<your domain>` (see [Deploy](#deploy-to-railway)). A Hako without previews shows
-"update Hako on your Mac".
+The relay needs a wildcard DNS name and certificate for the phone browser: `*.<your domain>`
+pointing at the same service as `<your domain>` (see [Deploy](#deploy-to-railway)). The Mac
+browser needs nothing more than the relay; it needs Google Chrome on the Mac, and says so when it
+is not there. A Hako without previews, or without the Mac browser, shows "update Hako on your Mac"
+(a preview then opens in the phone browser).
 
 ## Notifications on iPhone
 
@@ -414,6 +441,15 @@ a Vite or Next.js app, list them in a JSON file and name it in `MOCK_PREVIEWS`:
 
 `ports` (`[{ "port", "label" }]`) adds more ports, `url_path` the path to open first.
 `MOCK_PREVIEWS_OFF=1` leaves previews out, as a Hako without them would.
+
+The mock agent's **Mac browser** is a real headless Chrome on this computer (from
+`/Applications/Google Chrome.app`), started on the first viewer with a throwaway profile and a
+debugging port of its own, and stopped with the mock agent; it never touches the Chrome you use.
+A third preview, "Browser lab", has something for everything the Mac browser carries: links, a
+long page, a form, a new tab and a pop-up, `alert`, `confirm` and `prompt`, a select and date,
+time and colour fields, a file input, a download, and console errors. `MOCK_BROWSER_OFF=1` leaves
+the Mac browser out, as an older Hako would, and `MOCK_BROWSER_CHROME=/nowhere` shows the state for
+a Mac without Chrome.
 
 ### The mock agent's notifications
 
