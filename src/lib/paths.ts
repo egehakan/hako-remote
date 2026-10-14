@@ -7,6 +7,11 @@ export function setHomeDirectory(path: string | null): void {
   home = path;
 }
 
+/** The Mac's home directory, once the Mac has said where it is. */
+export function homeDirectory(): string | null {
+  return home;
+}
+
 /** Shows a home directory as `~`, the way a shell prompt does. */
 export function tildify(path: string): string {
   if (home !== null && home !== "/" && (path === home || path.startsWith(`${home}/`))) {

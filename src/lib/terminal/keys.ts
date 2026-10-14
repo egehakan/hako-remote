@@ -147,6 +147,32 @@ export function encodeWheel(direction: "up" | "down", column: number, row: numbe
   return `${ESC}[<${direction === "up" ? 64 : 65};${column};${row}M`;
 }
 
+/** The mouse tracking a program asked for, as xterm.js names it. */
+export type MouseTracking = "none" | "x10" | "vt200" | "drag" | "any";
+
+/**
+ * A left click over a cell, as a program that turned on mouse tracking expects it: a press and a
+ * release (only a press for X10 tracking), in the SGR form after mode 1006 and in the old
+ * `CSI M` form otherwise. `column` and `row` count from 1. Empty when there is nothing to send, or
+ * when the old form cannot reach that far (it ends at 223).
+ */
+export function encodeClick(
+  tracking: MouseTracking,
+  sgr: boolean,
+  column: number,
+  row: number,
+): string {
+  if (tracking === "none" || column < 1 || row < 1) return "";
+  if (sgr) {
+    const press = `${ESC}[<0;${column};${row}M`;
+    return tracking === "x10" ? press : `${press}${ESC}[<0;${column};${row}m`;
+  }
+  if (column > 223 || row > 223) return "";
+  const at = String.fromCharCode(32 + column, 32 + row);
+  const press = `${ESC}[M${String.fromCharCode(32)}${at}`;
+  return tracking === "x10" ? press : `${press}${ESC}[M${String.fromCharCode(32 + 3)}${at}`;
+}
+
 export type KeyEventLike = {
   key: string;
   ctrlKey: boolean;

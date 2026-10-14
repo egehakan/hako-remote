@@ -2,8 +2,9 @@
 // this screen, or to fill this screen at a readable font size.
 
 import { FitAddon } from "@xterm/addon-fit";
-import { Terminal } from "@xterm/xterm";
-import { encodeWheel, type KeyModes } from "./keys";
+import { type IMarker, Terminal } from "@xterm/xterm";
+import { encodeClick, encodeWheel, type KeyModes, type MouseTracking } from "./keys";
+import { cellAt, osc8Uri } from "./links";
 import type { Size, TerminalSink } from "./session";
 import type { TerminalLook } from "./theme";
 
@@ -28,6 +29,10 @@ export type SurfaceOptions = {
   onScrollKeys: (key: "ArrowUp" | "ArrowDown", count: number) => void;
   /** Wheel notches, already encoded, for a full-screen program that reads the mouse. */
   onScrollWheel: (data: string) => void;
+  /** A click, already encoded, for a program that reads the mouse. */
+  onMouse: (data: string) => void;
+  /** An OSC 8 hyperlink clicked with a mouse (not used on touch devices). */
+  onLink: (uri: string) => void;
   /** Called when the size this screen could hold changes while the layout is "phone". */
   onPhoneSize: (size: Size) => void;
   /** Called when scrolling or output changes whether older output is hidden below the view. */
@@ -42,6 +47,24 @@ const MAX_FONT_PX = 40;
 const XTERM_SCROLLBAR_PX = 14;
 const MAX_SCROLL_KEYS_PER_MOVE = 6;
 const SGR_MOUSE_MODE = 1006;
+/** How many OSC 8 links are remembered for taps; older ones scroll away long before. */
+const MAX_LINKS = 400;
+
+/** One OSC 8 hyperlink as it was drawn: from a cell to the cell after its last one. */
+type DrawnLink = {
+  uri: string;
+  buffer: "normal" | "alternate";
+  from: IMarker;
+  fromCol: number;
+  to: IMarker;
+  toCol: number;
+};
+
+/** A cell of the buffer: its line counted from the top of the history, and its column. */
+export type BufferCell = { line: number; col: number };
+
+/** A line as it reads, with wrapped rows joined, and the cell each of its characters is drawn in. */
+export type LogicalLine = { text: string; cells: BufferCell[] };
 
 /**
  * Keeps this terminal from answering the program's questions (device attributes, cursor position,
@@ -91,6 +114,7 @@ export class TerminalSurface implements TerminalSink {
   /** Whether the program asked for mouse reports in the SGR form, which xterm does not tell. */
   private sgrMouse = false;
   private lastPhoneSize: Size | null = null;
+  private links: DrawnLink[] = [];
   private revealQueued = false;
   private readonly observer: ResizeObserver;
   private layoutTimer: number | undefined;
@@ -112,9 +136,15 @@ export class TerminalSurface implements TerminalSink {
       // xterm's own text field never has focus on a touch device, and a hollow cursor is hard to see.
       cursorInactiveStyle: options.touch ? "block" : "outline",
       macOptionClickForcesSelection: true,
+      // Without a handler xterm asks with the browser's confirm dialog before opening a link.
+      linkHandler: {
+        activate: (_event, uri) => options.onLink(uri),
+        allowNonHttpProtocols: true,
+      },
     });
     muteReplies(this.terminal);
     this.watchMouseEncoding();
+    this.watchLinks();
     this.terminal.loadAddon(this.fit);
     this.terminal.onData((data) => options.onData(data));
     this.terminal.onScroll(() => this.noteScroll());
@@ -139,6 +169,54 @@ export class TerminalSurface implements TerminalSink {
       this.sgrMouse = false;
       return false;
     });
+  }
+
+  /**
+   * Remembers where OSC 8 hyperlinks are drawn, for taps: xterm keeps them for its own mouse
+   * handling only. The handler passes every sequence on to xterm.
+   */
+  private watchLinks(): void {
+    let open: Omit<DrawnLink, "to" | "toCol"> | null = null;
+    this.terminal.parser.registerOscHandler(8, (data) => {
+      const buffer = this.terminal.buffer.active;
+      if (open !== null) {
+        const to = this.terminal.registerMarker(0);
+        if (to && open.buffer === buffer.type) {
+          this.links.push({ ...open, to, toCol: buffer.cursorX });
+          if (this.links.length > MAX_LINKS) this.dropLink(this.links.shift());
+        } else {
+          open.from.dispose();
+          to?.dispose();
+        }
+        open = null;
+      }
+      const uri = osc8Uri(data);
+      if (uri !== "") {
+        const from = this.terminal.registerMarker(0);
+        if (from) open = { uri, buffer: buffer.type, from, fromCol: buffer.cursorX };
+      }
+      return false;
+    });
+  }
+
+  private dropLink(link: DrawnLink | undefined): void {
+    link?.from.dispose();
+    link?.to.dispose();
+  }
+
+  /** The OSC 8 address drawn at a cell of the buffer on show, or null. */
+  linkAt(cell: BufferCell): string | null {
+    const type = this.terminal.buffer.active.type;
+    for (let index = this.links.length - 1; index >= 0; index -= 1) {
+      const link = this.links[index];
+      if (link.buffer !== type || link.from.isDisposed || link.to.isDisposed) continue;
+      const afterStart =
+        cell.line > link.from.line || (cell.line === link.from.line && cell.col >= link.fromCol);
+      const beforeEnd =
+        cell.line < link.to.line || (cell.line === link.to.line && cell.col < link.toCol);
+      if (afterStart && beforeEnd) return link.uri;
+    }
+    return null;
   }
 
   /** Waits for the web font, so the first measurement is of the font that will be drawn. */
@@ -172,6 +250,8 @@ export class TerminalSurface implements TerminalSink {
   // must happen between two pieces of output is queued behind the first.
 
   replace(cols: number, rows: number, bytes: Uint8Array): void {
+    for (const link of this.links) this.dropLink(link);
+    this.links = [];
     // CAN ends an escape sequence the lost bytes may have left open; RIS resets everything else.
     this.terminal.write("\x18\x1bc", () => this.applySize(cols, rows));
     this.terminal.write(bytes, () => {
@@ -293,6 +373,76 @@ export class TerminalSurface implements TerminalSink {
     host.style.width = `${screen.offsetWidth}px`;
     host.style.height = `${screen.offsetHeight}px`;
     this.revealCursor();
+  }
+
+  // Taps
+
+  /** The mouse tracking the program asked for; "none" while it does not read the mouse. */
+  get mouseTracking(): MouseTracking {
+    return this.terminal.modes.mouseTrackingMode;
+  }
+
+  /** The cell of the buffer on show under a point of the screen, or null outside the grid. */
+  cellAtPoint(x: number, y: number): BufferCell | null {
+    const screen = this.screen;
+    if (!screen) return null;
+    // Measured as drawn, so the scale that fits the Mac's width, a zoom and a pinch all count.
+    const box = screen.getBoundingClientRect();
+    const cell = cellAt(x, y, box, this.terminal.cols, this.terminal.rows);
+    if (cell === null) return null;
+    return { line: this.terminal.buffer.active.viewportY + cell.row, col: cell.col };
+  }
+
+  /** Where a cell of the buffer is on screen, while it is in view. */
+  cellRect(cell: BufferCell): DOMRect | null {
+    const screen = this.screen;
+    if (!screen) return null;
+    const box = screen.getBoundingClientRect();
+    const row = cell.line - this.terminal.buffer.active.viewportY;
+    if (row < 0 || row >= this.terminal.rows) return null;
+    const width = box.width / this.terminal.cols;
+    const height = box.height / this.terminal.rows;
+    return new DOMRect(box.left + cell.col * width, box.top + row * height, width, height);
+  }
+
+  /** The line a cell is part of, from its first wrapped row to its last. */
+  logicalLine(at: number): LogicalLine {
+    const buffer = this.terminal.buffer.active;
+    let first = at;
+    while (first > 0 && buffer.getLine(first)?.isWrapped) first -= 1;
+    let text = "";
+    const cells: BufferCell[] = [];
+    for (let line = first; line === first || buffer.getLine(line)?.isWrapped; line += 1) {
+      const row = buffer.getLine(line);
+      if (!row) break;
+      for (let col = 0; col < row.length; col += 1) {
+        const cell = row.getCell(col);
+        // The second half of a wide character has no text of its own.
+        if (!cell || cell.getWidth() === 0) continue;
+        const chars = cell.getChars() || " ";
+        text += chars;
+        for (let index = 0; index < chars.length; index += 1) cells.push({ line, col });
+      }
+    }
+    return { text, cells };
+  }
+
+  /** The line of the buffer the cursor is on. */
+  get cursorLine(): number {
+    const buffer = this.terminal.buffer.active;
+    return buffer.baseY + buffer.cursorY;
+  }
+
+  /** Sends a left click at a cell to a program that reads the mouse. False when it reads none. */
+  click(cell: BufferCell): boolean {
+    const tracking = this.mouseTracking;
+    if (tracking === "none") return false;
+    // The program counts rows from the top of its screen, which history scrolled up hides.
+    const row = cell.line - this.terminal.buffer.active.baseY;
+    if (row < 0) return true;
+    const data = encodeClick(tracking, this.sgrMouse, cell.col + 1, row + 1);
+    if (data !== "") this.options.onMouse(data);
+    return true;
   }
 
   // Scrolling

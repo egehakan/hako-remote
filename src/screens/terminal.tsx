@@ -57,7 +57,7 @@ const IDLE_SESSION: SessionState = {
   rows: 0,
   fitError: null,
 };
-const IDLE_CONTROLLER: ControllerState = { sticky: NO_STICKY, scrolledUp: false };
+const IDLE_CONTROLLER: ControllerState = { sticky: NO_STICKY, scrolledUp: false, checking: null };
 const noSubscription = () => () => {};
 const idleSession = () => IDLE_SESSION;
 const idleController = () => IDLE_CONTROLLER;
@@ -116,6 +116,7 @@ export default function TerminalScreen({ sessionId }: { sessionId: string }) {
   const [lastListed, setLastListed] = useState(listed);
   if (listed !== null && listed !== lastListed) setLastListed(listed);
   const current = listed ?? lastListed;
+  const cwd = current?.pane.cwd ?? null;
   const panes = current ? terminals.filter((terminal) => terminal.tab === current.tab) : [];
 
   useEffect(() => {
@@ -137,6 +138,11 @@ export default function TerminalScreen({ sessionId }: { sessionId: string }) {
   }, [sessionId, touch]);
 
   useEffect(() => controller?.surface.setLook(look), [controller, look]);
+
+  // Relative paths in the output are read against where the terminal is.
+  useEffect(() => {
+    if (controller) controller.cwd = cwd;
+  }, [controller, cwd]);
 
   const layout = useMemo(() => layoutFor(prefs, look, touch), [prefs, look, touch]);
   useEffect(() => controller?.setLayout(layout), [controller, layout]);
@@ -317,7 +323,10 @@ export default function TerminalScreen({ sessionId }: { sessionId: string }) {
           <TouchLayer
             controller={controller}
             host={host.current}
-            onTap={focusInput}
+            onTap={(x, y) => {
+              if (!live || controller.tap(x, y) === "keyboard") focusInput();
+            }}
+            checking={ui.checking}
             onLongPress={() => setSelecting(controller.surface.text())}
             onPinch={pinch}
           />

@@ -1,12 +1,15 @@
 import { type PointerEvent, useEffect, useRef } from "react";
 import type { TerminalController } from "@/lib/terminal/controller";
+import type { BufferCell } from "@/lib/terminal/surface";
 
 type TouchLayerProps = {
   controller: TerminalController;
   /** The element xterm draws into, which is stretched while two fingers pinch. */
   host: HTMLElement;
-  /** A tap: the place to open the keyboard. */
-  onTap: () => void;
+  /** A tap at a point of the screen: a path to open, a click for the program, or the keyboard. */
+  onTap: (x: number, y: number) => void;
+  /** The cells of a tapped path that is being checked, which are underlined meanwhile. */
+  checking: BufferCell[] | null;
   onLongPress: () => void;
   /** Two fingers let go after changing their distance by `scale`, around `x`, `y` of the layer. */
   onPinch: (scale: number, x: number, y: number) => void;
@@ -28,7 +31,15 @@ const COAST_FRICTION = 0.9965;
  * zoom, a tap asks for the keyboard and a long press for text selection. xterm itself never sees
  * the touches, so it cannot mistake them for mouse clicks meant for the program.
  */
-export function TouchLayer({ controller, host, onTap, onLongPress, onPinch }: TouchLayerProps) {
+export function TouchLayer({
+  controller,
+  host,
+  onTap,
+  checking,
+  onLongPress,
+  onPinch,
+}: TouchLayerProps) {
+  const layer = useRef<HTMLDivElement>(null);
   const pointers = useRef(new Map<number, Point>());
   const gesture = useRef({
     start: { x: 0, y: 0 },
@@ -182,11 +193,12 @@ export function TouchLayer({ controller, host, onTap, onLongPress, onPinch }: To
 
   return (
     <div
+      ref={layer}
       className="absolute inset-0 touch-none select-none [-webkit-touch-callout:none]"
       // The click is what opens the keyboard: browsers only show one for a real tap.
-      onClick={() => {
+      onClick={(event) => {
         const state = gesture.current;
-        if (!state.moved && !state.longPressed) onTap();
+        if (!state.moved && !state.longPressed) onTap(event.clientX, event.clientY);
       }}
       onPointerDown={down}
       onPointerMove={move}
@@ -199,8 +211,53 @@ export function TouchLayer({ controller, host, onTap, onLongPress, onPinch }: To
       }}
     >
       <span className="sr-only">
-        Terminal screen. Tap to type. Swipe to scroll, pinch to zoom, hold to select text.
+        Terminal screen. Tap to type, or tap a path to open it. Swipe to scroll, pinch to zoom, hold
+        to select text.
       </span>
+      {checking && layer.current ? (
+        <PathMark controller={controller} cells={checking} layer={layer.current} />
+      ) : null}
     </div>
+  );
+}
+
+/** An underline under a tapped path, row by row, while the Mac is asked whether it is there. */
+function PathMark({
+  controller,
+  cells,
+  layer,
+}: {
+  controller: TerminalController;
+  cells: BufferCell[];
+  layer: HTMLElement;
+}) {
+  const origin = layer.getBoundingClientRect();
+  const rows = new Map<number, { left: number; right: number; bottom: number }>();
+  for (const cell of cells) {
+    const rect = controller.surface.cellRect(cell);
+    if (!rect) continue;
+    const row = rows.get(cell.line);
+    if (row) {
+      row.left = Math.min(row.left, rect.left);
+      row.right = Math.max(row.right, rect.right);
+    } else {
+      rows.set(cell.line, { left: rect.left, right: rect.right, bottom: rect.bottom });
+    }
+  }
+  return (
+    <>
+      {[...rows.values()].map((row) => (
+        <span
+          key={`${row.left}:${row.bottom}`}
+          aria-hidden="true"
+          className="pointer-events-none absolute h-0.5 rounded-full bg-amber motion-safe:animate-pulse"
+          style={{
+            left: row.left - origin.left,
+            top: row.bottom - origin.top - 2,
+            width: row.right - row.left,
+          }}
+        />
+      ))}
+    </>
   );
 }

@@ -11,15 +11,30 @@ import {
   type StickyState,
   tapSticky,
 } from "./modifiers";
+import { fileUrlPath, findPaths } from "./links";
+import {
+  findTarget,
+  knownTarget,
+  learnHome,
+  openPath,
+  type PathTarget,
+  targetsAt,
+  webLink,
+} from "./path-taps";
 import { TerminalSession } from "./session";
-import { type SurfaceLayout, TerminalSurface } from "./surface";
+import { type BufferCell, type SurfaceLayout, TerminalSurface } from "./surface";
 import type { TerminalLook } from "./theme";
 
 export type ControllerState = {
   sticky: StickyState;
   /** True while older output is shown and the newest is out of sight. */
   scrolledUp: boolean;
+  /** The cells of a tapped path while the Mac is asked whether it is there. */
+  checking: BufferCell[] | null;
 };
+
+/** What a tap did: "keyboard" leaves it to the caller to raise the keyboard, as before paths. */
+export type TapResult = "keyboard" | "handled";
 
 export type ControllerOptions = {
   sessionId: string;
@@ -41,7 +56,11 @@ const ENTER_AFTER_ATTACHMENT_MS = 300;
 export class TerminalController {
   readonly session: TerminalSession;
   readonly surface: TerminalSurface;
-  private state: ControllerState = { sticky: NO_STICKY, scrolledUp: false };
+  private state: ControllerState = { sticky: NO_STICKY, scrolledUp: false, checking: null };
+  /** Goes up with every tap, so that only the last one acts when the Mac answers. */
+  private tapCount = 0;
+  /** The terminal's working directory, which relative paths are read against. */
+  cwd: string | null = null;
   private readonly listeners = new Set<() => void>();
   /** True while the Mac's terminal is resized to this screen (the "phone" layout). */
   private fitPhone: boolean;
@@ -69,12 +88,15 @@ export class TerminalController {
         if (data !== null) this.session.send(data.repeat(count));
       },
       onScrollWheel: (data) => this.session.send(data),
+      onMouse: (data) => this.session.send(data),
+      onLink: (uri) => this.openLink(uri),
       onPhoneSize: (size) => {
         if (this.fitPhone) this.session.setFit(size);
       },
       onScrolledUp: (scrolledUp) => this.set({ scrolledUp }),
     });
     this.session = new TerminalSession(options.sessionId, this.surface);
+    if (!options.touch) this.providePathLinks();
   }
 
   subscribe = (listener: () => void): (() => void) => {
@@ -86,6 +108,7 @@ export class TerminalController {
 
   start(): void {
     this.session.start();
+    void learnHome();
   }
 
   dispose(): void {
@@ -188,10 +211,121 @@ export class TerminalController {
     this.surface.follow();
   }
 
+  // Taps
+
+  /**
+   * A tap at a point of the screen. A path under it opens in Files once the Mac has said it is
+   * there; otherwise a program that reads the mouse gets a click, and anything else is left to the
+   * keyboard. Decided at once whenever it can be, since only a tap may raise the keyboard.
+   */
+  tap(x: number, y: number): TapResult {
+    const cell = this.surface.cellAtPoint(x, y);
+    if (cell === null) return "keyboard";
+    this.tapCount += 1;
+    this.set({ checking: null });
+    const mouse = this.surface.mouseTracking !== "none";
+    const web = webLink(this.surface.linkAt(cell));
+    if (web !== null) {
+      window.open(web, "_blank", "noopener,noreferrer");
+      return "handled";
+    }
+    const targets = targetsAt(
+      this.surface,
+      cell,
+      this.cwd,
+      !mouse && !this.surface.alternateScreen,
+    );
+    const known = targets.length === 0 ? null : knownTarget(targets);
+    if (known !== null && known !== "unknown") {
+      openPath(known.target, known.kind);
+      return "handled";
+    }
+    if (known === null) {
+      if (mouse) {
+        this.surface.click(cell);
+        return "handled";
+      }
+      return "keyboard";
+    }
+    void this.checkThenOpen(targets, mouse ? cell : null);
+    return "handled";
+  }
+
+  /** Asks the Mac, then opens what is there, or clicks `orClick` when nothing is. */
+  private async checkThenOpen(targets: PathTarget[], orClick: BufferCell | null): Promise<void> {
+    const count = this.tapCount;
+    this.set({ checking: targets[0].cells });
+    const found = await findTarget(targets);
+    if (count !== this.tapCount) return;
+    this.set({ checking: null });
+    if (found) openPath(found.target, found.kind);
+    else if (orClick) this.surface.click(orClick);
+  }
+
+  /** An OSC 8 link clicked with a mouse. */
+  private openLink(uri: string): void {
+    const web = webLink(uri);
+    if (web !== null) {
+      window.open(web, "_blank", "noopener,noreferrer");
+      return;
+    }
+    const path = fileUrlPath(uri);
+    if (path === null) return;
+    void findTarget([{ path, line: null, column: null, cells: [] }]).then((found) => {
+      if (found) openPath(found.target, found.kind);
+    });
+  }
+
+  /** With a mouse, paths are links that underline under the pointer and open with a click. */
+  private providePathLinks(): void {
+    const { terminal } = this.surface;
+    terminal.registerLinkProvider({
+      provideLinks: (lineNumber, callback) => {
+        const line = lineNumber - 1;
+        const { text, cells } = this.surface.logicalLine(line);
+        const links = findPathsTouching(text, cells, line).flatMap((found) => {
+          const first = found.cells[0];
+          const last = found.cells[found.cells.length - 1];
+          if (!first || !last) return [];
+          return [
+            {
+              text: text.slice(found.start, found.end),
+              range: {
+                start: { x: first.col + 1, y: first.line + 1 },
+                end: { x: last.col + 1, y: last.line + 1 },
+              },
+              decorations: { pointerCursor: true, underline: true },
+              activate: () => {
+                const targets = targetsAt(this.surface, first, this.cwd, false);
+                void findTarget(targets).then((hit) => {
+                  if (hit) openPath(hit.target, hit.kind);
+                });
+              },
+            },
+          ];
+        });
+        callback(links.length > 0 ? links : undefined);
+      },
+    });
+  }
+
   private set(change: Partial<ControllerState>): void {
     const next = { ...this.state, ...change };
-    if (next.sticky === this.state.sticky && next.scrolledUp === this.state.scrolledUp) return;
+    if (
+      next.sticky === this.state.sticky &&
+      next.scrolledUp === this.state.scrolledUp &&
+      next.checking === this.state.checking
+    ) {
+      return;
+    }
     this.state = next;
     for (const listener of this.listeners) listener();
   }
+}
+
+/** The paths of a line that have a character on buffer line `line`. */
+function findPathsTouching(text: string, cells: readonly BufferCell[], line: number) {
+  return findPaths(text)
+    .map((found) => ({ ...found, cells: cells.slice(found.start, found.end) }))
+    .filter((found) => found.cells.some((cell) => cell.line === line));
 }
