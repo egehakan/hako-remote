@@ -203,13 +203,42 @@ app runs with no window open.
   file methods, listed under [Files](#errors).
 - The desktop app emits `workspace.changed` afterwards.
 - The folder's name, colour and icon are the app's defaults; the name falls back to the last part
-  of `directory`. Renaming, recolouring and removing folders stay on the Mac.
+  of `directory`. A folder is renamed with [`folder.rename`](#renaming-round-2); recolouring and
+  removing folders stay on the Mac.
 - An older desktop app answers `not_supported`. The client finds out before it offers the action,
   by sending `folder.create` with `directory: "?"`, which is not a path and so can add nothing: an
   app that has the method answers `bad_request`, as for any malformed path.
 
 Event `workspace.changed` (`{}`) is sent, at most twice a second, whenever the result of
 `workspace.list` would differ. The client calls `workspace.list` again.
+
+#### Renaming (round 2)
+
+| Method | Params | Result |
+|---|---|---|
+| `tab.rename` | `{ tab_id, title }` | `{}` |
+| `folder.rename` | `{ folder_id, name }` | `{}` |
+
+**`tab.rename`** sets a tab's own title, as renaming the tab on the Mac does.
+
+- `title` is a string of 1 to 200 characters after trimming whitespace, or `null` to go back to the
+  automatic title. An empty string after trimming is `bad_request`.
+- An unknown tab is `not_found`.
+- `workspace.changed` follows, and `workspace.list` reports the new title as the tab's `title`.
+- A terminal pane's own title is not renamed separately; on the phone a terminal is named by its
+  tab.
+
+**`folder.rename`** sets a tab folder's display name; the directory on disk is NOT renamed.
+
+- `name` is 1 to 100 characters after trimming, or `null` to go back to the default name (the
+  directory's last part, or the app's default such as "Home").
+- An unknown folder is `not_found`.
+- `workspace.changed` follows.
+
+Both answer `not_supported` on older apps. The client probes once per Mac connection by sending
+`tab.rename` with `tab_id: "?"` (and `title: "?"`), which names no tab: an app that has round 2
+answers `bad_request`. The client takes any answer other than `not_supported` (and other than the
+Mac not answering at all) to mean that both methods are there.
 
 ### Terminal (sprint 3)
 
@@ -305,8 +334,14 @@ arrive as stray input. Neither the snapshot nor the stream needs to hide such re
 #### Input
 
 - `data` in `term.input` is text to write to the PTY, as UTF-8, exactly as a terminal emulator would
-  send it: typed characters, control codes, and escape sequences for keys. The agent does not
-  interpret it. Enter is `CR`. Pasted text has its line breaks turned into `CR` and, when the
+  send it: typed characters, control codes, escape sequences for keys, and mouse reports. The agent
+  does not interpret it. Enter is `CR`.
+- Mouse reports come from the client's own emulator state. While the program has turned mouse
+  tracking on (`CSI ? 9 h`, `1000`, `1002` or `1003`), a tap on a phone is sent as a left button
+  press and release at the tapped cell, in the encoding the program asked for: SGR
+  (`CSI < 0 ; x ; y M` then `… m`) after `CSI ? 1006 h`, else the legacy `CSI M` form (press only
+  for mode 9). Scrolling is sent as wheel reports in the SGR form only. So the snapshot must
+  restore the mouse tracking mode and mode 1006 along with the other modes. Pasted text has its line breaks turned into `CR` and, when the
   program asked for bracketed paste, is wrapped in `ESC [ 200 ~` and `ESC [ 201 ~`.
 - Input for a session that is not known, or has ended, is dropped.
 
@@ -957,7 +992,7 @@ is repeated twice before the transfer fails.
 | Method | Params | Result |
 |---|---|---|
 | `git.repos` | | `{ repos: Repo[] }` |
-| `git.status` | `{ repo }` | `{ repo: Repo, files: File[], truncated }` |
+| `git.status` | `{ repo }` | `{ repo: Repo, files: File[], truncated, merge? }` |
 | `git.diff` | `{ repo, path, old_path?, commit? }` | `Diff` |
 | `git.commit` | `{ repo, message }` | `{ commit, output, repo: Repo }` |
 | `git.push` | `{ repo }` | `{ output, published, repo: Repo }` |
@@ -967,6 +1002,8 @@ is repeated twice before the transfer fails.
 | `git.switch` | `{ repo, branch, kind }` | `{ current, head }` |
 | `git.log` | `{ repo, limit, skip }` | `{ commits: Commit[], has_more, head, upstream }` |
 | `git.show` | `{ repo, commit }` | `{ commit: Commit, body, files: File[], truncated }` |
+| `git.merge` | `{ repo, branch, kind }` | `{ outcome, head, conflicts, output }` |
+| `git.merge_abort` | `{ repo }` | `{ head }` |
 
 ```ts
 type Repo = {
@@ -1048,8 +1085,8 @@ printed is what the owner reads.
   them as far as the agent can tell, decoded as UTF-8 with replacement characters, with white space
   trimmed from both ends, and cut to its last 16,384 bytes when it is longer.
 - One command at a time changes a repository. `git.commit`, `git.push`, `git.pull`,
-  `git.discard` and `git.switch` for a `repo` that already has one of them running fail at once
-  with `busy`; they are not queued. `git.repos`, `git.status`, `git.diff`, `git.branches`,
+  `git.discard`, `git.switch`, `git.merge` and `git.merge_abort` for a `repo` that already has one
+  of them running fail at once with `busy`; they are not queued. `git.repos`, `git.status`, `git.diff`, `git.branches`,
   `git.log` and `git.show` can be answered at any time.
 
 #### `git.repos`
@@ -1120,6 +1157,7 @@ to at most one file, by its two status letters `XY`:
   `truncated` is `true` when there are more, and the files are then the first 2,000 in that order.
 - `repo` is the repository as `git.repos` would describe it at the same moment, so the client can
   bring its list up to date; `repo.changed` counts every file, also beyond the limit.
+- `merge` (round 3) says whether a merge is in progress: see [Merge state](#merge-state-in-gitstatus).
 
 #### `git.diff`
 
@@ -1169,13 +1207,21 @@ The diff of one file against `HEAD`. `path` is a file's `path` from `git.status`
   lines and trailing spaces, and keeps lines that start with `#`). Hooks run as they do on the Mac.
 - `message` is a string that is not empty once trimmed, of at most 64 KiB (65,536 bytes) in UTF-8;
   anything else fails with `bad_request`. The client refuses an empty message before sending.
-- With an unfinished merge the same two commands conclude it, with the files as they are, conflict
-  markers included; the client warns before it sends that. The agent does nothing special for the
-  other values of `operation`.
+- With an unfinished merge the same two commands conclude it. Since round 3 one safety rule comes
+  first: while a merge is in progress, `git.commit` checks every path that is unmerged at that
+  moment, and if any of those files still contains a conflict marker line (a line starting with
+  `<<<<<<< `, a line that is `=======` exactly, or a line starting with `>>>>>>> `), it refuses
+  with `conflict` and a message listing those paths (at most 20, then "and N more"), committing
+  nothing. Outside a merge `git.commit` is unchanged. An app from before round 3 (one whose
+  `git.status` has no `merge` field) concludes the merge with the files as they are, conflict
+  markers included, and the client warns before it sends that. The agent does nothing special for
+  the other values of `operation`.
 - Result: `commit` is the full id of the new commit (`git rev-parse HEAD`), `output` is git's output
   of both commands, and `repo` is the repository afterwards.
 - When either command exits with a status other than 0 the answer is `git_failed` with git's output
   of both. That includes "nothing to commit", a hook that refuses, and a missing `user.name`.
+- `conflict`: a merge is in progress and an unmerged file still holds a conflict marker line (see
+  above). `message` lists the paths, relative to the repository; the client shows it as it is.
 - A commit never pushes. A client that offers "commit and push" sends `git.push` after `git.commit`
   has succeeded.
 
@@ -1316,18 +1362,86 @@ epoch.
   capped at 2,000 with `truncated`.
 - A commit that is reachable from neither HEAD nor the upstream has `side: "both"`.
 
+#### Merging (round 3)
+
+`git.merge` and `git.merge_abort` came after branches and history. An app from before them answers
+`not_supported` for both; the client probes once per Mac connection by sending `git.merge` with
+`repo: "?"`, which an app that has the method answers with `bad_request`, and offers merging only
+then.
+
+#### `git.merge`
+
+`{ repo, branch, kind }` -> `{ outcome, head, conflicts, output }`
+
+- Merges `branch` into the current branch. `kind` is `"local"` (a local branch) or `"remote"` (a
+  remote-tracking branch such as `origin/feature`). The branch must exist as `refs/heads/<branch>`
+  or `refs/remotes/<branch>` respectively (otherwise `not_found`) and is passed to git as that full
+  ref name, never where it could be read as an option. Merging the current branch into itself, or
+  with a detached HEAD, is `bad_request`.
+- Runs `git merge --no-edit <full ref>`: git's default fast-forward behaviour, the default merge
+  message, never `--force`, never a stash. Runs under the per-repo busy guard; `git.changed`
+  follows.
+- `outcome`: `"up_to_date"`, `"fast_forward"`, `"merged"` (a merge commit was made), or
+  `"conflicts"` (git stopped with conflicts; this is NOT an error: the repository is left
+  mid-merge, as git leaves it). `head` is HEAD's full hash afterwards. `conflicts` lists the
+  unmerged paths (relative to the repo) when `outcome` is `"conflicts"`, else empty. `output` is
+  git's output (last 16 KiB).
+- When git refuses to start (for example local changes would be overwritten, or a merge or rebase
+  is already in progress), the answer is `git_failed` with git's message and nothing changed.
+- The client sends `timeout_ms: 300000`.
+
+```ts
+type GitMergeResult = {
+  outcome: "up_to_date" | "fast_forward" | "merged" | "conflicts";
+  head: string;
+  conflicts: string[];
+  output: string;
+};
+```
+
+#### `git.merge_abort`
+
+`{ repo }` -> `{ head }`
+
+Runs `git merge --abort`. When no merge is in progress: `bad_request`. Busy guard; `git.changed`
+follows. `head` is HEAD's full hash afterwards.
+
+#### Merge state in `git.status`
+
+`git.status` results gain an optional field `merge`: `null` when no merge is in progress, else
+`{ branch, message, conflicts }`:
+
+- `branch`: the name being merged when git records it (from `MERGE_MSG`'s first line, best effort,
+  may be `null`);
+- `message`: the prepared merge message from `.git/MERGE_MSG` with comment lines removed and
+  trimmed;
+- `conflicts`: the unmerged paths, relative to the repository.
+
+Older apps omit the field, which is how the client tells that the commit safety rule of
+[`git.commit`](#gitcommit) is not there.
+
+```ts
+type GitMergeState = { branch: string | null; message: string; conflicts: string[] } | null;
+```
+
+#### Finishing a merge
+
+The existing `git.commit` finishes a merge (it already runs `git add -A` then commits, which
+concludes the merge), with the safety rule described under [`git.commit`](#gitcommit). The client
+offers "Commit merge" with `merge.message` prefilled.
+
 #### Operations that take long
 
-`git.commit` (hooks), `git.push` and `git.pull` (the network), and `git.discard` can outlast the 20
-seconds the relay gives a request. For these four the client sends `timeout_ms: 300000` (see
-[Frames](#frames)), and the agent simply answers when git has finished: no progress, no second
-frame. The agent, for its part, does not let git run for ever: a command of these four that is
-still running after 240 seconds is stopped, and the answer is `git_failed` with what git printed up
+`git.commit` (hooks), `git.push` and `git.pull` (the network), `git.discard` and `git.merge` (hooks,
+a large tree) can outlast the 20 seconds the relay gives a request. For these five the client sends
+`timeout_ms: 300000` (see [Frames](#frames)), and the agent simply answers when git has finished: no
+progress, no second frame. The agent, for its part, does not let git run for ever: a command of
+these five that is still running after 240 seconds is stopped, and the answer is `git_failed` with what git printed up
 to then and a last line saying that it was stopped. So the agent always answers before the relay
 gives up.
 
 The client sends `timeout_ms: 60000` for `git.switch` and the default for `git.branches`,
-`git.log` and `git.show`.
+`git.log`, `git.show` and `git.merge_abort`.
 
 If the client's connection drops in the meantime, the relay forgets the request and the answer is
 lost, while the command runs on to its end on the Mac. The client then reads the outcome from the
@@ -1342,9 +1456,9 @@ or that the set of repositories itself changed. The client reads again whatever 
 list, that repository's files, its branches and its graph, an open diff.
 
 The event is optional. An agent that sends it does so at most once a second per repository, after
-each `git.commit`, `git.push`, `git.pull`, `git.discard` and `git.switch` (failed ones included,
-since a failed pull changes files too), and, if it watches the working trees, when something changed them from
-outside. A client must not depend on it: it also reads again when the screen is opened, when the
+each `git.commit`, `git.push`, `git.pull`, `git.discard`, `git.switch`, `git.merge` and
+`git.merge_abort` (failed ones included, since a failed pull changes files too), and, if it watches
+the working trees, when something changed them from outside. A client must not depend on it: it also reads again when the screen is opened, when the
 owner asks, after each of its own commands, and when the page comes back to the foreground.
 
 #### Errors
@@ -1354,9 +1468,10 @@ The source control methods add these codes to the ones under [Frames](#frames):
 | Code | Meaning |
 |---|---|
 | `git_failed` | Git ran and exited with a status other than 0, or was stopped. `message` is git's output as defined above, several lines of it, which the client shows as it is. |
-| `busy` | Another `git.commit`, `git.push`, `git.pull`, `git.discard` or `git.switch` is still running in this repository. |
+| `busy` | Another `git.commit`, `git.push`, `git.pull`, `git.discard`, `git.switch`, `git.merge` or `git.merge_abort` is still running in this repository. |
+| `conflict` | `git.commit` during a merge: an unmerged file still holds a conflict marker line. `message` names the files. |
 | `not_found` | `repo` is not a working tree the agent lists, `path` (for `git.diff`) names nothing, or `commit` is not a commit of the repository. |
-| `bad_request` | A malformed `repo`, `path` or `commit`, an empty or oversized `message`, a `branch` that is not a branch name, or an unknown `kind`. |
+| `bad_request` | A malformed `repo`, `path` or `commit`, an empty or oversized `message`, a `branch` that is not a branch name, or an unknown `kind`; `git.merge` of the current branch or with a detached HEAD; `git.merge_abort` with no merge in progress. |
 | `failed` | The agent could not do it and git was not the one to say why. `message` is a sentence for the owner. |
 
 A client that does not know a code treats it as `failed`. An agent without these methods answers
