@@ -83,6 +83,14 @@ export function previewAddressingFrom(
     .toLowerCase()
     .replace(/^\.+|\.+$/g, "");
   if (domain === "" || isIpAddress(domain) || !/^[a-z0-9.-]+$/.test(domain)) return null;
+  // The preview cookie is set for the whole domain: one above the app's own host would hand it to
+  // hosts that are not this relay's, and would make the app's host a name of a preview.
+  const appHost = url.hostname.toLowerCase();
+  if (domain !== appHost && !domain.endsWith(`.${appHost}`)) {
+    throw new Error(
+      `PREVIEW_DOMAIN must be ${appHost} or a domain under it, the host of the first PUBLIC_ORIGIN`,
+    );
+  }
   return { domain, scheme: url.protocol, port: url.port === "" ? "" : `:${url.port}` };
 }
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { PreviewAddressing } from "../server/config.ts";
+import { type PreviewAddressing, previewAddressingFrom } from "../server/config.ts";
 import {
   signPreviewCookie,
   TICKET_TTL_MS,
@@ -301,4 +301,22 @@ test("stream windows: a sender stops at 512 KiB in flight, a receiver acknowledg
   assert.equal(receive.passedOn(1, true), 1, "drained: acknowledged at once");
   assert.equal(receive.received(40 * 1024 + 1), true, "the acknowledged bytes are room again");
   assert.equal(receive.received(1), false);
+});
+
+test("previews live at the app's host or under it, never above it", () => {
+  const at = (origin: string, domain?: string) =>
+    previewAddressingFrom(domain === undefined ? {} : { PREVIEW_DOMAIN: domain }, origin);
+  assert.deepEqual(at("https://hako.example.com"), {
+    domain: "hako.example.com",
+    scheme: "https:",
+    port: "",
+  });
+  assert.deepEqual(at("http://hako.localhost:8790"), {
+    domain: "hako.localhost",
+    scheme: "http:",
+    port: ":8790",
+  });
+  assert.equal(at("https://hako.example.com", "p.hako.example.com")?.domain, "p.hako.example.com");
+  assert.throws(() => at("https://hako.example.com", "example.com"));
+  assert.equal(at("http://127.0.0.1:8787"), null);
 });

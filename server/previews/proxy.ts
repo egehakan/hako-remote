@@ -6,7 +6,7 @@ import { type Duplex, pipeline, Transform, type TransformCallback } from "node:s
 import { isSameOriginPath, type Preview, previewPorts } from "../../shared/previews.ts";
 import type { Config, PreviewAddressing } from "../config.ts";
 import type { Relay } from "../relay.ts";
-import { parseCookies, type SessionStore } from "../sessions.ts";
+import type { SessionStore } from "../sessions.ts";
 import {
   PREVIEW_COOKIE_TTL_MS,
   previewCookieName,
@@ -122,8 +122,8 @@ export class PreviewProxy {
   private readonly appUrl: string;
   /** One HTTP client per port of a preview, keeping its connections for the next request. */
   private readonly agents = new Map<string, http.Agent>();
-  /** Closers of the open WebSockets, by the login session that opened them. */
-  private readonly sockets = new Map<string, Set<() => void>>();
+  /** Closers of the open responses and WebSockets, by the login session they belong to. */
+  private readonly open = new Map<string, Set<() => void>>();
 
   constructor(deps: PreviewProxyDeps) {
     if (deps.config.previews === null) throw new Error("previews need a preview domain");
@@ -141,14 +141,32 @@ export class PreviewProxy {
     return parsePreviewHost(request.headers.host, this.addressing);
   }
 
-  /** Ends every WebSocket opened under these login sessions; HTTP requests check on their own. */
+  /**
+   * Ends every response still streaming and every WebSocket under these login sessions; a new
+   * request checks the session on its own.
+   */
   closeSessions(sessionHashes: Iterable<string>): void {
     for (const hash of sessionHashes) {
-      const closers = this.sockets.get(hash);
+      const closers = this.open.get(hash);
       if (!closers) continue;
-      this.sockets.delete(hash);
+      this.open.delete(hash);
       for (const close of closers) close();
     }
+  }
+
+  /** Keeps a way to end something open under a session. Returns what forgets it again. */
+  private track(sessionHash: string, close: () => void): () => void {
+    let closers = this.open.get(sessionHash);
+    if (!closers) {
+      closers = new Set();
+      this.open.set(sessionHash, closers);
+    }
+    const kept = closers;
+    kept.add(close);
+    return () => {
+      kept.delete(close);
+      if (kept.size === 0 && this.open.get(sessionHash) === kept) this.open.delete(sessionHash);
+    };
   }
 
   handleRequest(req: IncomingMessage, res: ServerResponse, target: HostTarget): void {
@@ -171,10 +189,19 @@ export class PreviewProxy {
     sendPage(res, page, this.config.origins);
   }
 
+  /**
+   * The live login session a request's preview cookie belongs to. Every cookie of that name is
+   * tried, so a decoy a preview set with a longer path, which the browser sends first, locks nobody
+   * out.
+   */
   private sessionOf(req: IncomingMessage): string | null {
-    const value = parseCookies(req.headers.cookie).get(this.cookieName);
-    const sessionHash = verifyPreviewCookie(value, this.config.sessionSecret);
-    return sessionHash !== null && this.sessions.isLive(sessionHash) ? sessionHash : null;
+    for (const part of (req.headers.cookie ?? "").split(";")) {
+      const eq = part.indexOf("=");
+      if (eq === -1 || part.slice(0, eq).trim() !== this.cookieName) continue;
+      const sessionHash = verifyPreviewCookie(part.slice(eq + 1).trim(), this.config.sessionSecret);
+      if (sessionHash !== null && this.sessions.isLive(sessionHash)) return sessionHash;
+    }
+    return null;
   }
 
   private async serve(req: IncomingMessage, res: ServerResponse, target: HostTarget) {
@@ -207,7 +234,7 @@ export class PreviewProxy {
       this.send(res, pages.tooLarge());
       return;
     }
-    this.proxy(req, res, resolved);
+    this.proxy(req, res, resolved, sessionHash);
   }
 
   /** Exchanges a ticket for the preview cookie and goes on to the page that was asked for. */
@@ -314,6 +341,7 @@ export class PreviewProxy {
     req: IncomingMessage,
     res: ServerResponse,
     resolved: Extract<Resolved, { ok: true }>,
+    sessionHash: string,
   ) {
     const { map, port, origin } = resolved;
     const headers = rewriteRequestHeaders(req.rawHeaders, {
@@ -340,7 +368,12 @@ export class PreviewProxy {
         res.destroy();
       }
     });
+    const untrack = this.track(sessionHash, () => {
+      upstream.destroy();
+      res.destroy();
+    });
     res.on("close", () => {
+      untrack();
       if (!res.writableFinished) upstream.destroy();
     });
     upstream.on("response", (answer) => {
@@ -500,22 +533,13 @@ export class PreviewProxy {
       }
     }, WEBSOCKET_PING_MS);
     ping.unref();
-    let closers = this.sockets.get(sessionHash);
-    if (!closers) {
-      closers = new Set();
-      this.sockets.set(sessionHash, closers);
-    }
-    const close = () => cleanup();
-    closers.add(close);
+    const untrack = this.track(sessionHash, cleanup);
     let done = false;
     const finish = () => {
       if (done) return;
       done = true;
       clearInterval(ping);
-      closers.delete(close);
-      if (closers.size === 0 && this.sockets.get(sessionHash) === closers) {
-        this.sockets.delete(sessionHash);
-      }
+      untrack();
       cleanup();
     };
     tunnel.on("end", () => browser.end());

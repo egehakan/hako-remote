@@ -68,7 +68,9 @@ const app = createApp({
 
 const appListener = getRequestListener(app.fetch);
 // A request for a preview origin never reaches the app's routes, and the reverse.
-const server = createServer((request, response) => {
+// The browser sends every cookie a preview set for the preview domain, which includes the app's own
+// host, so the headers can be larger than Node's default 16 KiB allows.
+const server = createServer({ maxHeaderSize: 64 * 1024 }, (request, response) => {
   const target = previews?.target(request);
   if (previews && target && target.kind !== "app") {
     previews.handleRequest(request, response, target);
