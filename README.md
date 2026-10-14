@@ -270,10 +270,11 @@ it as you. So:
   when you are done; never leave it running.
 - Against a relay on `localhost` the shell is on by default. Against any other relay it is off
   unless you start the mock agent with `MOCK_SHELL=1`. `MOCK_SHELL=0` turns it off everywhere.
-- In it, `show-paths` prints paths of every kind to tap, and `mouse-test` (`scripts/mouse-test.py`)
-  is a full-screen program that reads the mouse and says where each press and release landed, with
-  a list of "agents" that open and close on a tap; `--legacy` and `--x10` try the older mouse
-  reports. `q` leaves it.
+- In it, `show-paths` prints paths of every kind to tap, `show-wrapped` prints long paths broken
+  onto several rows at the terminal's width, as Claude Code and git break them, and `mouse-test`
+  (`scripts/mouse-test.py`) is a full-screen program that reads the mouse and says where each press
+  and release landed, with a list of "agents" that open and close on a tap; `--legacy` and `--x10`
+  try the older mouse reports. `q` leaves it.
 - `MOCK_RENAME=0` leaves out renaming tabs and folders, as a desktop app from before it would.
 - The shell is `zsh` (or `sh`) started by `scripts/pty-helper.py`, a small Python helper that gives
   it a pseudo-terminal without a native Node module. It starts in the mock agent's temporary

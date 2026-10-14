@@ -289,10 +289,12 @@ function shellHome(): string {
   mkdirSync(bin, { recursive: true });
   writeFileSync(join(bin, "mouse-test"), readFileSync(MOUSE_TEST), { mode: 0o755 });
   writeFileSync(join(bin, "show-paths"), SHOW_PATHS, { mode: 0o755 });
+  writeFileSync(join(bin, "show-wrapped"), SHOW_WRAPPED, { mode: 0o755 });
   writeFileSync(
     join(shellDirectory, ".zshrc"),
     "PROMPT='%F{yellow}mock%f %1~ %# '\nunsetopt beep\nunset HISTFILE\npath=(~/.mock-bin $path)\n" +
-      "print -P '%F{8}Try show-paths (paths to tap) and mouse-test (taps in a program that reads the mouse).%f'\n",
+      "print -P '%F{8}Try show-paths and show-wrapped (paths to tap) and mouse-test (taps in a " +
+      "program that reads the mouse).%f'\n",
   );
   return shellDirectory;
 }
@@ -322,6 +324,52 @@ printf '⏺ Links: %s]8;;file://%s%s/Documents/GitHub/hako/Cargo.toml%sthe hako 
   "$esc" "$(hostname)" "$HOME" "$st" "$esc" "$st"
 printf ' and %s]8;;file://%s/Documents/GitHub/hako/docs%sits docs folder%s]8;;%s\\n' \\
   "$esc" "$HOME" "$bel" "$esc" "$bel"
+`;
+
+/**
+ * Prints long paths broken onto several rows with real newlines at the terminal's width, as Claude
+ * Code, git and Markdown renderers break them, and two paths on rows one after the other.
+ */
+const SHOW_WRAPPED = `#!/usr/bin/env python3
+import os, shutil
+
+home = os.environ["HOME"]
+cols = max(shutil.get_terminal_size().columns, 24)
+name = "Documents/GitHub/hako-remote/src/components/terminal/a-name-long-enough-to-break.tsx"
+target = os.path.join(home, name)
+os.makedirs(os.path.dirname(target), exist_ok=True)
+if not os.path.exists(target):
+    with open(target, "w") as out:
+        out.writelines("export const line" + str(n) + " = " + str(n) + ";" + chr(10) for n in range(1, 41))
+
+def wrap(first, text, indent, width):
+    rows, room, line = [], width - len(first), first
+    while text:
+        rows.append(line + text[:room])
+        text, line, room = text[room:], indent, width - len(indent)
+    return rows
+
+def show(title, rows):
+    print(title)
+    for row in rows:
+        print(row)
+    print()
+
+show("Broken at the edge, no indent (as git does):", wrap("", target, "", cols))
+show("Indented as Claude Code does:", wrap("⏺ Wrote ", target + " with 40 lines.", "  ", cols))
+show("Relative to home, with a line:", wrap("  ⎿  Error in ", "~/" + name + ":12", "     ", cols))
+inner = min(cols, 52) - 4
+print("╭" + "─" * (inner + 2) + "╮")
+for row in wrap("Read ", "~/" + name + ":7", "  ", inner):
+    print("│ " + row.ljust(inner) + " │")
+print("╰" + "─" * (inner + 2) + "╯")
+print()
+slash = target.rfind("/", 0, min(cols, 60)) + 1
+show("Broken right after a slash:", [target[:slash], target[slash:]])
+show("Two paths on rows one after the other:", [
+    "~/Documents/GitHub/hako/Cargo.toml",
+    "~/Documents/GitHub/hako-remote/README.md",
+])
 `;
 
 class ShellTerminal extends MockTerminal {
