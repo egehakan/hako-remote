@@ -1,4 +1,6 @@
 import { readOutputFrameSessionId } from "../shared/frames.ts";
+import { isPreviewId, isPort, type Preview } from "../shared/previews.ts";
+import { StreamHub, type TunnelStream } from "./previews/streams.ts";
 import {
   type AgentStatus,
   CLOSE_REPLACED,
@@ -15,7 +17,13 @@ import {
 export type RelaySocket = {
   send(data: string | Uint8Array): void;
   close(code: number, reason: string): void;
+  /** Bytes queued and not yet written to the network. */
+  bufferedAmount?: () => number;
 };
+
+/** What the relay knows about a preview the browser asked for. */
+export type PreviewLookup =
+  { state: "offline" } | { state: "unknown" } | { state: "found"; preview: Preview };
 
 export type RelayOptions = {
   requestTimeoutMs?: number;
@@ -27,6 +35,8 @@ export type RelayOptions = {
    */
   onNotify?: (data: unknown) => void;
   log?: (message: string) => void;
+  /** How long a byte stream may stay quiet before it is closed (WebSockets excepted). */
+  streamIdleMs?: number;
 };
 
 type Client = {
@@ -56,6 +66,11 @@ type Agent = {
 };
 
 const RELAY_PREFIX = "relay";
+/** How long the relay waits for the agent's answer to a request of its own (`preview.list`). */
+const OWN_REQUEST_TIMEOUT_MS = 5_000;
+/** A preview that is not in the list is asked about again at most this often. */
+const PREVIEW_REFRESH_MIN_MS = 2_000;
+const PREVIEWS_CHANGED_DELAY_MS = 100;
 const MAX_REQUEST_ID_LENGTH = 128;
 const INFO_TIMEOUT_MS = 5_000;
 
@@ -115,12 +130,39 @@ export class Relay {
   private agent: Agent | null = null;
   private nextClientNumber = 1;
   private nextRelayRequestNumber = 1;
+  /** The relay's own requests to the agent that wait for an answer, by id. */
+  private readonly ownRequests = new Map<
+    string,
+    {
+      resolve: (frame: Record<string, unknown> | null) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  >();
+  /** The agent's previews, as `preview.list` last answered; null before it has. */
+  private previews: Map<string, Preview> | null = null;
+  private previewsLoadedAt = 0;
+  private previewsLoading: Promise<void> | null = null;
+  private previewsTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The byte streams to the agent's previews. */
+  readonly streams: StreamHub;
 
   constructor(options: RelayOptions = {}) {
     this.requestTimeoutMs = options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
     this.infoTimeoutMs = options.infoTimeoutMs ?? INFO_TIMEOUT_MS;
     this.log = options.log ?? (() => {});
     this.onNotify = options.onNotify ?? null;
+    this.streams = new StreamHub({
+      transport: () => {
+        const socket = this.agent?.socket;
+        if (!socket) return null;
+        return {
+          send: (data) => socket.send(data),
+          bufferedAmount: () => socket.bufferedAmount?.() ?? 0,
+        };
+      },
+      idleMs: options.streamIdleMs,
+      log: this.log,
+    });
   }
 
   get clientCount(): number {
@@ -167,11 +209,12 @@ export class Relay {
     const agent = this.agent;
     if (!agent || agent.socket !== socket) return;
     if (typeof data !== "string") {
-      this.routeOutput(agent, data);
+      if (!this.streams.handleBinary(data)) this.routeOutput(agent, data);
       return;
     }
     const frame = parseFrame(data);
     if (!frame) return;
+    if (this.streams.handleText(frame)) return;
     switch (frame.t) {
       case "res":
         this.handleAgentResponse(agent, frame);
@@ -305,6 +348,13 @@ export class Relay {
 
   private handleAgentResponse(agent: Agent, frame: Record<string, unknown>): void {
     if (typeof frame.id !== "string") return;
+    const own = this.ownRequests.get(frame.id);
+    if (own) {
+      clearTimeout(own.timer);
+      this.ownRequests.delete(frame.id);
+      own.resolve(frame);
+      return;
+    }
     if (frame.id === agent.infoRequestId) {
       if (frame.ok === true && isRecord(frame.result)) {
         agent.info = {
@@ -330,6 +380,7 @@ export class Relay {
 
   private handleAgentEvent(frame: Record<string, unknown>): void {
     if (typeof frame.event !== "string") return;
+    if (frame.event === "previews.changed") this.previewsChanged();
     if (frame.event === "notify" && this.onNotify) {
       try {
         this.onNotify(frame.data);
@@ -414,12 +465,94 @@ export class Relay {
     if (this.agent !== agent || agent.announced) return;
     agent.announced = true;
     this.broadcast(this.statusEvent());
+    void this.loadPreviews();
+  }
+
+  // Previews
+
+  /**
+   * What is known about a preview: whether the Mac is there, and if so the preview as its list
+   * says. A preview the list does not have is asked about once more, as it may be brand new.
+   */
+  async lookupPreview(id: string): Promise<PreviewLookup> {
+    if (!this.agent) return { state: "offline" };
+    const known = this.previews?.get(id);
+    if (known) return { state: "found", preview: known };
+    if (this.previews === null || Date.now() - this.previewsLoadedAt >= PREVIEW_REFRESH_MIN_MS) {
+      await this.loadPreviews();
+    }
+    if (!this.agent) return { state: "offline" };
+    const found = this.previews?.get(id);
+    return found ? { state: "found", preview: found } : { state: "unknown" };
+  }
+
+  /** Opens a byte stream to one port of a preview. */
+  openStream(previewId: string, port: number): Promise<TunnelStream> {
+    return this.streams.open(previewId, port);
+  }
+
+  private previewsChanged(): void {
+    if (this.previewsTimer !== null) return;
+    this.previewsTimer = setTimeout(() => {
+      this.previewsTimer = null;
+      void this.loadPreviews(true);
+    }, PREVIEWS_CHANGED_DELAY_MS);
+    this.previewsTimer.unref();
+  }
+
+  /** Asks the agent for its previews. An app without previews has none. */
+  private loadPreviews(force = false): Promise<void> {
+    if (this.previewsLoading && !force) return this.previewsLoading;
+    const loading = this.ownRequest("preview.list", {}).then((frame) => {
+      if (frame === null) return;
+      this.previewsLoadedAt = Date.now();
+      const list =
+        frame.ok === true && isRecord(frame.result) && Array.isArray(frame.result.previews)
+          ? frame.result.previews
+          : [];
+      const previews = new Map<string, Preview>();
+      for (const item of list) {
+        if (isRecord(item) && isPreviewId(item.id) && isPort(item.port)) {
+          previews.set(item.id, item as unknown as Preview);
+        }
+      }
+      this.previews = previews;
+    });
+    this.previewsLoading = loading;
+    void loading.finally(() => {
+      if (this.previewsLoading === loading) this.previewsLoading = null;
+    });
+    return loading;
+  }
+
+  /** A request of the relay's own. Resolves with the answer, or null without one. */
+  private ownRequest(method: string, params: object): Promise<Record<string, unknown> | null> {
+    const agent = this.agent;
+    if (!agent) return Promise.resolve(null);
+    const id = this.nextRelayRequestId();
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.ownRequests.delete(id);
+        resolve(null);
+      }, OWN_REQUEST_TIMEOUT_MS);
+      timer.unref();
+      this.ownRequests.set(id, { resolve, timer });
+      this.sendTo(agent.socket, { t: "req", id, method, params });
+    });
   }
 
   private dropAgent(agent: Agent): void {
     clearTimeout(agent.infoTimer);
     const wasAnnounced = agent.announced;
     this.agent = null;
+    this.streams.dropAll("The Mac disconnected");
+    for (const own of this.ownRequests.values()) {
+      clearTimeout(own.timer);
+      own.resolve(null);
+    }
+    this.ownRequests.clear();
+    this.previews = null;
+    this.previewsLoadedAt = 0;
     for (const [rewritten, pending] of this.pending) {
       clearTimeout(pending.timer);
       pending.client.pending.delete(rewritten);

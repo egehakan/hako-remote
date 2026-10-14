@@ -1,11 +1,13 @@
-import type { Server } from "node:http";
+import { createServer } from "node:http";
 import path from "node:path";
-import { serve } from "@hono/node-server";
+import { getRequestListener } from "@hono/node-server";
 import { UserStore } from "./auth.ts";
 import { loadConfig } from "./config.ts";
 import { openDatabase } from "./db.ts";
 import { createApp } from "./http.ts";
 import { NotifyGate } from "./notify.ts";
+import { TicketStore } from "./previews/access.ts";
+import { PreviewProxy } from "./previews/proxy.ts";
 import { loadVapidKeys, PushService, PushStore } from "./push.ts";
 import { LoginLimiter } from "./rate-limit.ts";
 import { Relay } from "./relay.ts";
@@ -44,6 +46,11 @@ if (await users.ensure(config.ownerEmail, config.initialPassword)) {
   log("created the owner account from HAKO_OWNER_EMAIL and HAKO_INITIAL_PASSWORD");
 }
 
+const tickets = new TicketStore();
+const previews = config.previews
+  ? new PreviewProxy({ config, relay, sessions, tickets, log })
+  : null;
+
 const app = createApp({
   config,
   users,
@@ -51,16 +58,31 @@ const app = createApp({
   limiter,
   pushStore,
   push,
+  tickets,
   onSessionsEnded: (hashes) => {
     relay.closeSessions(hashes);
+    previews?.closeSessions(hashes);
     pushStore.removeForSessions(hashes);
   },
 });
 
-const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
-  log(`listening on port ${info.port}, serving ${config.origins.join(", ")}`);
-}) as Server;
-attachWebSockets(server, { config, relay, sessions });
+const appListener = getRequestListener(app.fetch);
+// A request for a preview origin never reaches the app's routes, and the reverse.
+const server = createServer((request, response) => {
+  const target = previews?.target(request);
+  if (previews && target && target.kind !== "app") {
+    previews.handleRequest(request, response, target);
+  } else {
+    void appListener(request, response);
+  }
+});
+attachWebSockets(server, { config, relay, sessions, previews });
+server.listen(config.port, () => {
+  const where = config.previews
+    ? `, previews under *.${config.previews.domain}`
+    : ", previews off (no preview domain)";
+  log(`listening on port ${config.port}, serving ${config.origins.join(", ")}${where}`);
+});
 
 const pruneTimer = setInterval(() => {
   sessions.prune();
@@ -71,6 +93,7 @@ pruneTimer.unref();
 
 function shutdown(): void {
   log("shutting down");
+  relay.streams.dispose();
   server.close(() => {
     db.close();
     process.exit(0);

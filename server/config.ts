@@ -14,6 +14,18 @@ export type Config = {
   vapidKeys: { publicKey: string; privateKey: string } | null;
   /** The contact a push service is given for this relay: a `mailto:` or an `https:` address. */
   vapidSubject: string;
+  /** Where previews are served, or null when the app's address cannot have subdomains. */
+  previews: PreviewAddressing | null;
+};
+
+/** `https://<id>.<domain><port>` is the origin of the preview `<id>`. */
+export type PreviewAddressing = {
+  /** Lower case, without a leading dot: `hako.example.com`. */
+  domain: string;
+  /** `https:` or `http:`, the app's own. */
+  scheme: string;
+  /** `:8787`, or "" for the scheme's default port; the app's own. */
+  port: string;
 };
 
 function required(env: NodeJS.ProcessEnv, name: string, minLength = 1): string {
@@ -54,6 +66,26 @@ function vapidSubjectFrom(env: NodeJS.ProcessEnv, ownerEmail: string): string {
   return subject;
 }
 
+function isIpAddress(hostname: string): boolean {
+  return /^\d+\.\d+\.\d+\.\d+$/.test(hostname) || hostname.startsWith("[");
+}
+
+/**
+ * Previews live on subdomains of `PREVIEW_DOMAIN`, or of the host of the first `PUBLIC_ORIGIN`, with
+ * that origin's scheme and port. An IP address has no subdomains, so it means no previews.
+ */
+export function previewAddressingFrom(
+  env: NodeJS.ProcessEnv,
+  appOrigin: string,
+): PreviewAddressing | null {
+  const url = new URL(appOrigin);
+  const domain = (env.PREVIEW_DOMAIN?.trim() || url.hostname)
+    .toLowerCase()
+    .replace(/^\.+|\.+$/g, "");
+  if (domain === "" || isIpAddress(domain) || !/^[a-z0-9.-]+$/.test(domain)) return null;
+  return { domain, scheme: url.protocol, port: url.port === "" ? "" : `:${url.port}` };
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const port = Number(env.PORT ?? 8787);
   const origins = parseOrigins(env.PUBLIC_ORIGIN ?? `http://localhost:${port}`);
@@ -71,5 +103,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     clientDir: path.resolve(env.CLIENT_DIR ?? "./dist"),
     vapidKeys: vapidKeysFrom(env),
     vapidSubject: vapidSubjectFrom(env, ownerEmail),
+    previews: previewAddressingFrom(env, origins[0]),
   };
 }

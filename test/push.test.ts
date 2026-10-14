@@ -18,6 +18,7 @@ import { UserStore } from "../server/auth.ts";
 import type { Config } from "../server/config.ts";
 import { openDatabase } from "../server/db.ts";
 import { createApp } from "../server/http.ts";
+import { TicketStore } from "../server/previews/access.ts";
 import { loadVapidKeys, PushService, PushStore, readSubscription } from "../server/push.ts";
 import { LoginLimiter } from "../server/rate-limit.ts";
 import { SessionStore } from "../server/sessions.ts";
@@ -161,6 +162,7 @@ function relay(options: { secure?: boolean } = {}) {
     limiter: new LoginLimiter(db),
     pushStore: store,
     push,
+    tickets: new TicketStore(),
     onSessionsEnded: (hashes) => {
       ended.push(...hashes);
       store.removeForSessions(hashes);
@@ -205,7 +207,12 @@ test("a subscription is stored for the session, and a notification arrives encry
   const state = await json(saved);
   assert.equal(state.subscribed, true);
   assert.equal(state.muted, false);
-  assert.deepEqual(state.kinds, { agent_waiting: true, agent_done: true, command_done: true });
+  assert.deepEqual(state.kinds, {
+    agent_waiting: true,
+    agent_done: true,
+    command_done: true,
+    preview_ready: true,
+  });
   assert.deepEqual(await json(device.call("/api/push/device")), state);
   assert.equal(store.count(), 1);
 
@@ -285,7 +292,12 @@ test("muted devices, and devices that turned a kind off, are left out", async ()
   const kinds = await json(
     noDone.device.call("/api/push/settings", { kinds: { agent_done: false } }),
   );
-  assert.deepEqual(kinds.kinds, { agent_waiting: true, agent_done: false, command_done: true });
+  assert.deepEqual(kinds.kinds, {
+    agent_waiting: true,
+    agent_done: false,
+    command_done: true,
+    preview_ready: true,
+  });
 
   const reached = async (notification: NotifyEvent) => {
     received = [];
@@ -314,7 +326,12 @@ test("preferences come with a subscription, and survive its renewal", async () =
   });
   const state = await json(first);
   assert.equal(state.muted, true);
-  assert.deepEqual(state.kinds, { agent_waiting: true, agent_done: true, command_done: false });
+  assert.deepEqual(state.kinds, {
+    agent_waiting: true,
+    agent_done: true,
+    command_done: false,
+    preview_ready: true,
+  });
 
   const again = await device.call("/api/push/subscribe", browser("phone").subscription);
   const renewed = await json(again);

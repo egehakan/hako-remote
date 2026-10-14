@@ -8,6 +8,7 @@ import {
   type NotifyEvent,
   type NotifyKind,
   type NotifyPrefs,
+  notifySubject,
   notifyTag,
   type PushPayload,
 } from "../shared/notify.ts";
@@ -37,6 +38,7 @@ const KIND_COLUMNS: Record<NotifyKind, string> = {
   agent_waiting: "on_agent_waiting",
   agent_done: "on_agent_done",
   command_done: "on_command_done",
+  preview_ready: "on_preview_ready",
 };
 
 /** A stable name for an endpoint that does not give the endpoint away. */
@@ -147,8 +149,8 @@ export class PushStore {
       .prepare(
         `INSERT INTO push_subscriptions
            (endpoint, p256dh, auth, created_at, session_hash, muted,
-            on_agent_waiting, on_agent_done, on_command_done)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            on_agent_waiting, on_agent_done, on_command_done, on_preview_ready)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         subscription.endpoint,
@@ -160,6 +162,7 @@ export class PushStore {
         Number(kept.kinds.agent_waiting),
         Number(kept.kinds.agent_done),
         Number(kept.kinds.command_done),
+        Number(kept.kinds.preview_ready),
       );
     return this.state(sessionHash);
   }
@@ -175,7 +178,8 @@ export class PushStore {
     const changed = this.db
       .prepare(
         `UPDATE push_subscriptions
-            SET muted = ?, on_agent_waiting = ?, on_agent_done = ?, on_command_done = ?
+            SET muted = ?, on_agent_waiting = ?, on_agent_done = ?, on_command_done = ?,
+                on_preview_ready = ?
           WHERE session_hash = ?`,
       )
       .run(
@@ -183,6 +187,7 @@ export class PushStore {
         Number(prefs.kinds.agent_waiting),
         Number(prefs.kinds.agent_done),
         Number(prefs.kinds.command_done),
+        Number(prefs.kinds.preview_ready),
         sessionHash,
       );
     return Number(changed.changes) > 0 ? this.state(sessionHash) : null;
@@ -243,6 +248,7 @@ function toStored(row: Record<string, unknown>): StoredSubscription {
         agent_waiting: Number(row.on_agent_waiting) !== 0,
         agent_done: Number(row.on_agent_done) !== 0,
         command_done: Number(row.on_command_done) !== 0,
+        preview_ready: Number(row.on_preview_ready ?? 1) !== 0,
       },
     },
   };
@@ -309,7 +315,8 @@ export class PushService {
       body: notification.body,
       session_id: notification.session_id,
       tab_id: notification.tab_id,
-      tag: notifyTag(notification.session_id),
+      ...(notification.preview_id === undefined ? {} : { preview_id: notification.preview_id }),
+      tag: notifyTag(notifySubject(notification)),
     });
     if (payload === null) {
       this.log("push: dropped a notification that does not fit in a push message");
@@ -317,7 +324,7 @@ export class PushService {
     }
     // A device that is offline is left one message for each terminal, the newest.
     const topic = createHash("sha256")
-      .update(notification.session_id)
+      .update(notifySubject(notification))
       .digest("base64url")
       .slice(0, 32);
     const urgency = notification.kind === "agent_waiting" ? "high" : "normal";

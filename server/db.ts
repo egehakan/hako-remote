@@ -43,6 +43,7 @@ const ADDED_COLUMNS: [table: string, column: string, definition: string][] = [
   ["push_subscriptions", "on_agent_waiting", "INTEGER NOT NULL DEFAULT 1"],
   ["push_subscriptions", "on_agent_done", "INTEGER NOT NULL DEFAULT 1"],
   ["push_subscriptions", "on_command_done", "INTEGER NOT NULL DEFAULT 1"],
+  ["push_subscriptions", "on_preview_ready", "INTEGER NOT NULL DEFAULT 1"],
 ];
 
 function migrate(db: DatabaseSync): void {

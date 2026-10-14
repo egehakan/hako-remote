@@ -3,6 +3,7 @@ import {
   NOTIFY_MAX_PER_MINUTE,
   type NotifyEvent,
   type NotifyKind,
+  notifySubject,
   readNotify,
 } from "../shared/notify.ts";
 
@@ -57,7 +58,8 @@ export class NotifyGate {
       this.log("dropped a notify event that is not one: unknown kind, no session or no title");
       return;
     }
-    const state = this.stateOf(notification.session_id);
+    const subject = notifySubject(notification);
+    const state = this.stateOf(subject);
     const last = state.delivered.get(notification.kind);
     const now = this.now();
     if (last === undefined || now - last.at >= this.collapseMs) {
@@ -68,7 +70,7 @@ export class NotifyGate {
     }
     if (last.title === notification.title && last.body === notification.body) return;
     state.held = notification;
-    if (state.timer === null) this.arm(notification.session_id, state, last.at + this.collapseMs);
+    if (state.timer === null) this.arm(subject, state, last.at + this.collapseMs);
   }
 
   /** Stops every timer. Notifications that were waiting are not sent. */

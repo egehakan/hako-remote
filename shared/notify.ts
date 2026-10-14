@@ -1,15 +1,25 @@
 // The `notify` event of docs/protocol.md ("Notifications"): its shape, its limits and how a relay
 // cleans one. Shared by the relay, the web client, the service worker's payload and the mock agent.
 
-export const NOTIFY_KINDS = ["agent_waiting", "agent_done", "command_done"] as const;
+import { isPreviewId } from "./previews.ts";
+
+export const NOTIFY_KINDS = [
+  "agent_waiting",
+  "agent_done",
+  "command_done",
+  "preview_ready",
+] as const;
 export type NotifyKind = (typeof NOTIFY_KINDS)[number];
 
 export type NotifyEvent = {
   kind: NotifyKind;
   title: string;
   body: string;
-  session_id: string;
+  /** Null only for `preview_ready`, about a preview that runs in no tab of Hako. */
+  session_id: string | null;
   tab_id: string | null;
+  /** The preview a `preview_ready` is about; only that kind has it. */
+  preview_id?: string;
 };
 
 /** Which kinds a device wants, and whether it wants any at all. */
@@ -17,7 +27,7 @@ export type NotifyPrefs = { muted: boolean; kinds: Record<NotifyKind, boolean> }
 
 export const DEFAULT_NOTIFY_PREFS: NotifyPrefs = {
   muted: false,
-  kinds: { agent_waiting: true, agent_done: true, command_done: true },
+  kinds: { agent_waiting: true, agent_done: true, command_done: true, preview_ready: true },
 };
 
 /** What the relay holds for the device a login session belongs to (`GET /api/push/device`). */
@@ -43,6 +53,8 @@ export type PushPayload = {
   body: string;
   session_id: string | null;
   tab_id: string | null;
+  /** Set for `preview_ready` only. */
+  preview_id?: string | null;
   tag: string;
 };
 
@@ -53,6 +65,16 @@ export function isNotifyKind(value: unknown): value is NotifyKind {
 /** One tag per terminal, so a newer notification replaces the older one on the device. */
 export function notifyTag(sessionId: string): string {
   return `hako:${sessionId}`;
+}
+
+/**
+ * What a notification is about, for collapsing and replacing: its terminal, or for a preview that
+ * runs in no tab, the preview.
+ */
+export function notifySubject(
+  notification: Pick<NotifyEvent, "session_id" | "preview_id">,
+): string {
+  return notification.session_id ?? `preview:${notification.preview_id ?? ""}`;
 }
 
 const encoder = new TextEncoder();
@@ -102,17 +124,27 @@ function cleanId(value: unknown): string | null {
 /**
  * Reads the data of a `notify` event. Returns the notification with its text cleaned and cut to
  * the limits, or null when it is not one the relay delivers: an unknown kind, no usable
- * `session_id`, or no title left once cleaned.
+ * `session_id` (which only `preview_ready` may leave out), a `preview_ready` without a valid
+ * `preview_id`, or no title left once cleaned.
  */
 export function readNotify(data: unknown): NotifyEvent | null {
   if (typeof data !== "object" || data === null) return null;
   const record = data as Record<string, unknown>;
   if (!isNotifyKind(record.kind)) return null;
+  const previewId = record.kind === "preview_ready" ? record.preview_id : null;
+  if (record.kind === "preview_ready" && !isPreviewId(previewId)) return null;
   const sessionId = cleanId(record.session_id);
-  if (sessionId === null) return null;
+  if (sessionId === null && record.kind !== "preview_ready") return null;
   if (typeof record.title !== "string") return null;
   const title = cleanLine(record.title, NOTIFY_TITLE_MAX);
   if (title === "") return null;
   const body = typeof record.body === "string" ? cleanText(record.body, NOTIFY_BODY_MAX) : "";
-  return { kind: record.kind, title, body, session_id: sessionId, tab_id: cleanId(record.tab_id) };
+  return {
+    kind: record.kind,
+    title,
+    body,
+    session_id: sessionId,
+    tab_id: cleanId(record.tab_id),
+    ...(isPreviewId(previewId) ? { preview_id: previewId } : {}),
+  };
 }

@@ -10,6 +10,10 @@ import { hashPassword, passwordProblem, verifyPassword } from "./password.ts";
 import { type PushService, type PushStore, readPrefsChange, readSubscription } from "./push.ts";
 import { type LoginLimiter, limiterKey } from "./rate-limit.ts";
 import { DEFAULT_NOTIFY_PREFS } from "../shared/notify.ts";
+import { isPreviewId, isSameOriginPath, type PreviewTicket } from "../shared/previews.ts";
+import type { TicketStore } from "./previews/access.ts";
+import { previewOrigin, previewOriginPattern } from "./previews/host.ts";
+import { AUTH_PATH } from "./previews/proxy.ts";
 import { cookieName, SESSION_TTL_MS, type SessionStore } from "./sessions.ts";
 
 export type AppDeps = {
@@ -19,11 +23,20 @@ export type AppDeps = {
   limiter: LoginLimiter;
   pushStore: PushStore;
   push: PushService;
+  tickets: TicketStore;
   /** Called with the hashes of sessions that just ended, so their sockets can be closed. */
   onSessionsEnded: (sessionHashes: string[]) => void;
 };
 
-const CONTENT_SECURITY_POLICY = [
+function contentSecurityPolicy(config: Config): string {
+  return [
+    ...BASE_POLICY,
+    // Previews are shown in a frame, from their own origins.
+    ...(config.previews ? [`frame-src ${previewOriginPattern(config.previews)}`] : []),
+  ].join("; ");
+}
+
+const BASE_POLICY = [
   "default-src 'self'",
   "connect-src 'self'",
   // `blob:` is for a picture picked on the device, drawn to be scaled before it is attached.
@@ -34,7 +47,7 @@ const CONTENT_SECURITY_POLICY = [
   "base-uri 'none'",
   "form-action 'self'",
   "frame-ancestors 'none'",
-].join("; ");
+];
 
 function readString(body: unknown, field: string): string | null {
   if (typeof body !== "object" || body === null) return null;
@@ -43,13 +56,14 @@ function readString(body: unknown, field: string): string | null {
 }
 
 export function createApp(deps: AppDeps): Hono {
-  const { config, users, sessions, limiter, pushStore, push } = deps;
+  const { config, users, sessions, limiter, pushStore, push, tickets } = deps;
   const cookie = cookieName(config.secureCookies);
+  const policy = contentSecurityPolicy(config);
   const app = new Hono();
 
   app.use(async (c, next) => {
     await next();
-    c.header("Content-Security-Policy", CONTENT_SECURITY_POLICY);
+    c.header("Content-Security-Policy", policy);
     c.header("X-Content-Type-Options", "nosniff");
     c.header("X-Frame-Options", "DENY");
     c.header("Referrer-Policy", "no-referrer");
@@ -203,6 +217,26 @@ export function createApp(deps: AppDeps): Hono {
     if (result.ok) return c.json({ ok: true });
     if (result.gone) return c.json({ error: "gone" }, 410);
     return c.json({ error: "push_failed", status: result.status, reason: result.reason }, 502);
+  });
+
+  // Previews: a one-time address that lets this browser into one preview.
+
+  app.post("/api/previews/ticket", async (c) => {
+    const session = currentSession(getCookie(c, cookie));
+    if (!session) return c.json({ error: "unauthorized" }, 401);
+    if (!config.previews) return c.json({ error: "previews_off" }, 404);
+    const body: unknown = await c.req.json().catch(() => null);
+    const id = typeof body === "object" && body !== null ? (body as { id?: unknown }).id : null;
+    const path =
+      typeof body === "object" && body !== null ? (body as { path?: unknown }).path : null;
+    if (!isPreviewId(id)) return c.json({ error: "bad_request" }, 400);
+    if (path !== null && path !== undefined && !isSameOriginPath(path)) {
+      return c.json({ error: "bad_request" }, 400);
+    }
+    const ticket = tickets.issue(id, session);
+    const next = encodeURIComponent(typeof path === "string" ? path : "/");
+    const url = `${previewOrigin(id, config.previews)}${AUTH_PATH}?t=${ticket}&next=${next}`;
+    return c.json({ url } satisfies PreviewTicket);
   });
 
   app.all("/api/*", (c) => c.json({ error: "not_found" }, 404));

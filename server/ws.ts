@@ -9,6 +9,7 @@ import {
 } from "../shared/protocol.ts";
 import { bearerToken, isAllowedOrigin, safeEqual } from "./auth.ts";
 import type { Config } from "./config.ts";
+import type { PreviewProxy } from "./previews/proxy.ts";
 import type { Relay, RelaySocket } from "./relay.ts";
 import { cookieName, parseCookies, type SessionStore } from "./sessions.ts";
 
@@ -34,6 +35,7 @@ function asRelaySocket(ws: WebSocket): RelaySocket {
       }
       ws.send(data, { binary: typeof data !== "string" });
     },
+    bufferedAmount: () => ws.bufferedAmount,
     close(code, reason) {
       ws.close(code, reason);
     },
@@ -66,13 +68,18 @@ function keepAlive(ws: WebSocket, stillValid: () => boolean = () => true): void 
 
 export function attachWebSockets(
   server: Server,
-  deps: { config: Config; relay: Relay; sessions: SessionStore },
+  deps: { config: Config; relay: Relay; sessions: SessionStore; previews: PreviewProxy | null },
 ): void {
-  const { config, relay, sessions } = deps;
+  const { config, relay, sessions, previews } = deps;
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES });
   const cookie = cookieName(config.secureCookies);
 
   server.on("upgrade", (request: IncomingMessage, socket: Duplex, head: Buffer) => {
+    const target = previews?.target(request);
+    if (previews && target && target.kind !== "app") {
+      previews.handleUpgrade(request, socket, head, target);
+      return;
+    }
     const pathname = new URL(request.url ?? "/", "http://relay").pathname;
 
     if (pathname === "/ws/agent") {
