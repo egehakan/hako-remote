@@ -103,20 +103,52 @@ terminal's working directory.
 - **Saving to your phone.** "Save to phone", in a file's menu (the dots at the end of its row) or
   at the top of an open file, fetches it with a progress bar and hands it over. On an iPhone that
   is the share sheet, which is the dependable way from a home-screen app to "Save Image" into
-  Photos or "Save to Files"; a computer's browser downloads it. Any file up to 50 MB; if it changes
-  on the Mac while it is being read, you are told and can try again. Folders cannot be saved.
+  Photos or "Save to Files"; a computer's browser downloads it. Any file up to the limit the Mac
+  states (200 MB with a current Hako); one over 50 MB first shows its size and waits for a yes,
+  since the phone holds it in memory until it is saved. If it changes on the Mac while it is being
+  read, you are told and can try again.
+- **Folders as a zip.** "Download as .zip" in a folder's menu (and in the menu of the folder you
+  are in, the dots at the top) has the Mac zip it and then fetches the zip. A switch, on by
+  default, leaves out what can be made again: `.git`, `node_modules`, virtual environments,
+  `__pycache__`, `.next`, `.turbo`, `.gradle`, `Pods`, `DerivedData` and a Rust `target`; how many
+  folders were left out is said when the zip is ready.
 - **Uploading.** "Upload" at the bottom of a folder opens the phone's own choice of photo library,
-  camera and files, several at a time, and puts them in that folder exactly as they are, up to 50
-  MB each. Each has its progress and can be cancelled. A name that is already there is never
-  overwritten without asking: replace it, keep both (the new one becomes `name (2).ext`), or
+  camera and files, several at a time, and puts them in that folder exactly as they are, up to the
+  same limit each. Each has its progress and can be cancelled. A name that is already there is
+  never overwritten without asking: replace it, keep both (the new one becomes `name (2).ext`), or
   cancel. A file only appears under its name on the Mac once it has arrived whole.
+- **Uploading a folder.** In a computer's browser, "Upload", then "A folder", makes the folder's
+  directories on the Mac and sends its files into them (empty directories are not part of what a
+  browser hands over). Safari on an iPhone can't pick a folder, so there the sheet offers a .zip
+  instead (the Files app makes one with Compress); when it has arrived, "Extract here" on it, or in
+  a zip's menu, unpacks it into a new folder beside it. A zip that holds one folder unpacks as
+  that folder. A zip whose entries would land outside its folder, a zip with a password and one
+  that unpacks to over 1 GB or 50,000 entries are refused.
+- **Changing files.** Hold a row (or "Select" in a row's menu, or the dots at the top) to choose
+  several; a bar at the bottom then has Copy, Cut, Duplicate, Rename, Trash and More. Each row's
+  menu has the same for one item, and "New" at the bottom makes a folder or an empty file. Copy and
+  Cut fill the app's own clipboard, which a small bar shows with "Paste here" in whatever folder
+  you are in, until it is pasted or cleared. When names are already there, one question covers the
+  whole paste: keep both, replace (a file only, never a folder), or skip those. Move to Trash asks
+  first, naming what goes, and uses the Mac's Trash, where "Put Back" works; nothing is deleted
+  for good from here. Long copies, moves and zips show that they are under way, and when some
+  items fail each is listed with what the Mac said. With a keyboard: Cmd or Ctrl and C, X, V, A;
+  Delete or Backspace for the Trash; F2 to rename; Cmd- or Ctrl-click and Shift-click to choose;
+  a right click opens a row's menu.
+- **Previews.** PDFs (every page, drawn as they come into view, with two-finger zoom and a page
+  counter), Word `.docx` documents (as text, headings, lists, tables and pictures, with nothing
+  that runs and nothing fetched from elsewhere), spreadsheets (`.xlsx`, `.xls`, `.ods`, `.csv`,
+  `.tsv`, a table per sheet, the first 2,000 rows of each) and PowerPoint `.pptx` (each slide's
+  text and pictures in order; the layout is not kept) open as previews. The file is fetched whole
+  first, so the size limit for saving applies. A CSV or TSV small enough to open as text has a
+  switch between its text and its table.
 - **When the link breaks.** A transfer pauses while the Mac is out of reach (or the phone puts the
   app in the background) and goes on by itself when it is back. If Hako on the Mac was restarted
   in the meantime, the transfer fails with a button to try again.
-- Renaming, moving and deleting stay on the Mac.
 
 A Hako that does not have the file methods yet answers `not_supported`, and Files says to update
-it; the same goes for saving, uploading and attaching pictures, which need a newer Hako again.
+it; the same goes for saving, uploading and attaching pictures, which need a newer Hako again, and
+for changing files, zipping and unzipping, which need a newer one still.
 
 ## Source control
 
@@ -234,7 +266,7 @@ work, dangle and point outside.
 - `kill -USR2 <pid of the mock agent>` rewrites `fixtures/conflict.txt`, which is how to see a
   save being refused because the file changed.
 - `MOCK_FS=0` leaves the file methods out, as a desktop app from before they existed would.
-- `Downloads` holds what moving files is tried with: files of several pieces, one at the 50 MB limit
+- `Downloads` holds what moving files is tried with: files of several pieces, one at the 200 MB limit
   and one just over it, `notes.txt` to upload another of, and a folder that may not be written to.
   `kill -USR2 <pid>` also rewrites `Downloads/changes-while-read.bin`, to see a download refused
   because the file changed. Attached pictures go to a temporary uploads area of the mock agent's
@@ -242,6 +274,15 @@ work, dangle and point outside.
 - `MOCK_TRANSFERS=0` leaves out only the transfer methods, as the desktop app before them would;
   `MOCK_UPLOAD_IDLE_MS` shortens the 15 minutes an untouched upload is kept.
 - `MOCK_FS_DELAY_MS=1500` makes every file answer slow.
+- Renaming, copying, moving, the Trash, zipping and unzipping change the tree for real. The Trash
+  is a `.Trash` directory at the top of the tree, and zips for downloading go to `.hako/archives`
+  there. `Documents/Previews` holds a document of each kind the previews read (a 20-page PDF, a
+  Word file, spreadsheets with two sheets, CSV and TSV files, one over 2 MB, slides), made at
+  start. `Downloads/zips` holds zips that unpack and zips that must be refused (an entry that
+  escapes its folder, a link that points out of it, a password, a file that is not a zip), and
+  `Downloads/project-with-heavy-folders` shows what "leave out heavy folders" leaves out.
+  `MOCK_OPS=0` leaves these methods out, as a desktop app from before them would, and
+  `MOCK_OPS_DELAY_MS=4000` makes them slow.
 - `MOCK_FOLDERS=0` leaves out adding a folder and making a directory, as a desktop app from before
   them would, and "New folder" then says to update Hako.
 
