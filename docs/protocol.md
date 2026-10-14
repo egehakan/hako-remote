@@ -222,7 +222,8 @@ Event `workspace.changed` (`{}`) is sent, at most twice a second, whenever the r
 **`tab.rename`** sets a tab's own title, as renaming the tab on the Mac does.
 
 - `title` is a string of 1 to 200 characters after trimming whitespace, or `null` to go back to the
-  automatic title. An empty string after trimming is `bad_request`.
+  automatic title. A missing `title` is taken as `null`. An empty string after trimming is
+  `bad_request`.
 - An unknown tab is `not_found`.
 - `workspace.changed` follows, and `workspace.list` reports the new title as the tab's `title`.
 - A terminal pane's own title is not renamed separately; on the phone a terminal is named by its
@@ -231,7 +232,10 @@ Event `workspace.changed` (`{}`) is sent, at most twice a second, whenever the r
 **`folder.rename`** sets a tab folder's display name; the directory on disk is NOT renamed.
 
 - `name` is 1 to 100 characters after trimming, or `null` to go back to the default name (the
-  directory's last part, or the app's default such as "Home").
+  directory's last part, or the app's default such as "Home"). A missing `name` is taken as
+  `null`.
+- Folder ids, like tab ids, change when the app restarts; a client never keeps one across
+  sessions.
 - An unknown folder is `not_found`.
 - `workspace.changed` follows.
 
@@ -1212,16 +1216,18 @@ The diff of one file against `HEAD`. `path` is a file's `path` from `git.status`
   moment, and if any of those files still contains a conflict marker line (a line starting with
   `<<<<<<< `, a line that is `=======` exactly, or a line starting with `>>>>>>> `), it refuses
   with `conflict` and a message listing those paths (at most 20, then "and N more"), committing
-  nothing. Outside a merge `git.commit` is unchanged. An app from before round 3 (one whose
-  `git.status` has no `merge` field) concludes the merge with the files as they are, conflict
-  markers included, and the client warns before it sends that. The agent does nothing special for
-  the other values of `operation`.
+  nothing. The message is the line `Conflict markers remain in:`, then one path per line
+  (relative to the repository), then `and N more` on a line of its own when there are more than
+  20; the client reads the paths from it to offer each file. Outside a merge `git.commit` is
+  unchanged. An app from before round 3 (one whose `git.status` has no `merge` field) concludes
+  the merge with the files as they are, conflict markers included, and the client warns before it
+  sends that. The agent does nothing special for the other values of `operation`.
 - Result: `commit` is the full id of the new commit (`git rev-parse HEAD`), `output` is git's output
   of both commands, and `repo` is the repository afterwards.
 - When either command exits with a status other than 0 the answer is `git_failed` with git's output
   of both. That includes "nothing to commit", a hook that refuses, and a missing `user.name`.
 - `conflict`: a merge is in progress and an unmerged file still holds a conflict marker line (see
-  above). `message` lists the paths, relative to the repository; the client shows it as it is.
+  above), with the message described there.
 - A commit never pushes. A client that offers "commit and push" sends `git.push` after `git.commit`
   has succeeded.
 
@@ -1374,10 +1380,14 @@ then.
 `{ repo, branch, kind }` -> `{ outcome, head, conflicts, output }`
 
 - Merges `branch` into the current branch. `kind` is `"local"` (a local branch) or `"remote"` (a
-  remote-tracking branch such as `origin/feature`). The branch must exist as `refs/heads/<branch>`
-  or `refs/remotes/<branch>` respectively (otherwise `not_found`) and is passed to git as that full
-  ref name, never where it could be read as an option. Merging the current branch into itself, or
-  with a detached HEAD, is `bad_request`.
+  remote-tracking branch such as `origin/feature`). An empty `branch`, or one holding a NUL, is
+  `bad_request`; any other name that is not an existing `refs/heads/<branch>` or
+  `refs/remotes/<branch>` respectively (`feature~1` included) is `not_found`. The branch is never
+  passed where git could read it as an option. Merging the current branch into itself, or with a
+  detached HEAD, is `bad_request`.
+- The merge message is git's usual one for the short name (`Merge branch 'feature'`,
+  `Merge remote-tracking branch 'origin/feature'`), not one that names the full ref
+  (`Merge branch 'refs/heads/feature'`, which is what `git merge refs/heads/feature` writes).
 - Runs `git merge --no-edit <full ref>`: git's default fast-forward behaviour, the default merge
   message, never `--force`, never a stash. Runs under the per-repo busy guard; `git.changed`
   follows.
@@ -1387,7 +1397,8 @@ then.
   unmerged paths (relative to the repo) when `outcome` is `"conflicts"`, else empty. `output` is
   git's output (last 16 KiB).
 - When git refuses to start (for example local changes would be overwritten, or a merge or rebase
-  is already in progress), the answer is `git_failed` with git's message and nothing changed.
+  is already in progress), the answer is `git_failed` with git's message and nothing changed. A
+  merge that fails and leaves a merge in progress without any unmerged path is `git_failed` too.
 - The client sends `timeout_ms: 300000`.
 
 ```ts
@@ -1412,13 +1423,14 @@ follows. `head` is HEAD's full hash afterwards.
 `{ branch, message, conflicts }`:
 
 - `branch`: the name being merged when git records it (from `MERGE_MSG`'s first line, best effort,
-  may be `null`);
+  may be `null`). It comes from a message and may name a branch that does not exist (any more);
+  the client shows it and never looks it up;
 - `message`: the prepared merge message from `.git/MERGE_MSG` with comment lines removed and
   trimmed;
 - `conflicts`: the unmerged paths, relative to the repository.
 
-Older apps omit the field, which is how the client tells that the commit safety rule of
-[`git.commit`](#gitcommit) is not there.
+An app that has round 3 always sends the field; older apps omit it, which is how the client tells
+that the commit safety rule of [`git.commit`](#gitcommit) is not there.
 
 ```ts
 type GitMergeState = { branch: string | null; message: string; conflicts: string[] } | null;
