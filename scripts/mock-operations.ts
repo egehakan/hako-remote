@@ -126,12 +126,8 @@ export function createOperationMethods(root: string, options: Options) {
 
   function copyOrMove(params: Record<string, unknown>, moving: boolean): FsItemResults {
     const { sources } = params;
-    if (
-      !Array.isArray(sources) ||
-      sources.length < 1 ||
-      sources.length > MAX_SOURCES ||
-      !sources.every(isValidPath)
-    ) {
+    // A malformed path fails only its own item, below.
+    if (!Array.isArray(sources) || sources.length < 1 || sources.length > MAX_SOURCES) {
       throw new FsFailure("bad_request", `sources must be 1 to ${MAX_SOURCES} absolute paths`);
     }
     const onConflict = (params.on_conflict ?? "fail") as FsConflictChoice;
@@ -143,7 +139,18 @@ export function createOperationMethods(root: string, options: Options) {
     const started = Date.now();
 
     return {
-      results: (sources as string[]).map((source): FsItemResult => {
+      results: (sources as unknown[]).map((given): FsItemResult => {
+        const source = String(given);
+        if (!isValidPath(given)) {
+          return {
+            source,
+            path: null,
+            error: {
+              code: "bad_request",
+              message: `${source} is not an absolute, normalised path`,
+            },
+          };
+        }
         if (Date.now() - started > OPERATION_DEADLINE_MS) {
           return {
             source,
@@ -338,20 +345,16 @@ export function createOperationMethods(root: string, options: Options) {
 
     "fs.trash": (params: Record<string, unknown>): FsItemResults => {
       const { paths } = params;
-      if (
-        !Array.isArray(paths) ||
-        paths.length < 1 ||
-        paths.length > MAX_SOURCES ||
-        !paths.every(isValidPath)
-      ) {
+      if (!Array.isArray(paths) || paths.length < 1 || paths.length > MAX_SOURCES) {
         throw new FsFailure("bad_request", `paths must be 1 to ${MAX_SOURCES} absolute paths`);
       }
       mkdirSync(trash, { recursive: true });
       const protectedPaths = new Set(["/", root, ...options.folderDirectories()]);
       return {
-        results: (paths as string[]).map((source): FsItemResult => {
+        results: (paths as unknown[]).map((given): FsItemResult => {
+          const source = String(given);
           try {
-            const from = locate(source);
+            const from = locate(given);
             if (protectedPaths.has(source) || protectedPaths.has(realpathSync(from))) {
               throw new FsFailure(
                 "bad_request",
@@ -428,25 +431,19 @@ export function createOperationMethods(root: string, options: Options) {
       let total = 0;
       for (const entry of Object.values(zip.files)) {
         // JSZip tidies `..` out of the names it reads; what the zip really says is kept here.
-        const original = (entry as { unsafeOriginalName?: string }).unsafeOriginalName ?? entry.name;
+        const original =
+          (entry as { unsafeOriginalName?: string }).unsafeOriginalName ?? entry.name;
         const name = original.replace(/\/+$/, "");
         const segments = name.split("/");
         if (segments[0] === "__MACOSX" || segments.at(-1) === ".DS_Store") continue;
         if (name.startsWith("/") || name.includes("\\") || name.includes("\0")) {
-          throw new FsFailure("bad_request", `${entry.name} would land outside the new folder`);
+          throw new FsFailure("bad_request", `${original} would land outside the new folder`);
         }
         if (segments.some((segment) => segment === ".." || segment === "." || segment === "")) {
-          throw new FsFailure("bad_request", `${entry.name} would land outside the new folder`);
+          throw new FsFailure("bad_request", `${original} would land outside the new folder`);
         }
         const mode = entry.unixPermissions;
         const link = typeof mode === "number" && (mode & S_IFMT) === S_IFLNK;
-        if (link) {
-          const target = await entry.async("string");
-          const landing = posix.normalize(posix.join(posix.dirname(name), target));
-          if (target.startsWith("/") || landing === ".." || landing.startsWith("../")) {
-            throw new FsFailure("bad_request", `${entry.name} points outside the new folder`);
-          }
-        }
         const size = (entry as unknown as { _data?: { uncompressedSize?: number } })._data
           ?.uncompressedSize;
         total += typeof size === "number" ? size : 0;
@@ -465,11 +462,32 @@ export function createOperationMethods(root: string, options: Options) {
         );
       }
 
-      const folderName = freeName(destination, extractedName(nameOf(shownZip)), true);
+      // A zip whose every entry is under one folder unpacks that folder's contents, named after it,
+      // so the zip of a folder comes back as that folder and not as a folder inside another.
+      const tops = new Set(planned.map((item) => item.path.split("/")[0]));
+      const [top] = tops;
+      const single =
+        tops.size === 1 &&
+        planned.every((item) => item.path !== top || item.entry.dir) &&
+        planned.some((item) => item.path.startsWith(`${top}/`));
+      const placed = planned
+        .map((item) => ({ ...item, path: single ? item.path.slice(top.length + 1) : item.path }))
+        .filter((item) => item.path !== "");
+      for (const { path, entry, link } of placed) {
+        if (!link) continue;
+        const target = await entry.async("string");
+        const landing = posix.normalize(posix.join(posix.dirname(path), target));
+        if (target.startsWith("/") || landing === ".." || landing.startsWith("../")) {
+          throw new FsFailure("bad_request", `${entry.name} points outside the new folder`);
+        }
+      }
+
+      const base = single ? top : extractedName(nameOf(shownZip));
+      const folderName = freeName(destination, base, true);
       const folder = join(destination, folderName);
       try {
         mkdirSync(folder);
-        for (const { path, entry, link } of planned) {
+        for (const { path, entry, link } of placed) {
           const target = join(folder, path);
           if (entry.dir) {
             mkdirSync(target, { recursive: true });
@@ -489,7 +507,7 @@ export function createOperationMethods(root: string, options: Options) {
         rmSync(folder, { recursive: true, force: true });
         throw failure(error, shownDestination);
       }
-      return { path: joinShown(shownDestination, folderName), entries: planned.length };
+      return { path: joinShown(shownDestination, folderName), entries: placed.length };
     },
   };
 

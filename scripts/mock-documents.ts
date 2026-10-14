@@ -69,7 +69,9 @@ function pdf(pages: number): Buffer {
       `0.07 0.08 0.11 RG 2 w 56 120 m 556 120 l S`,
       `BT /F2 9 Tf 56 100 Td (${pdfText(`hako-remote preview fixture, page ${page}`)}) Tj ET`,
     ].join("\n");
-    const content = objects.push(`<< /Length ${Buffer.byteLength(lines)} >>\nstream\n${lines}\nendstream`);
+    const content = objects.push(
+      `<< /Length ${Buffer.byteLength(lines)} >>\nstream\n${lines}\nendstream`,
+    );
     kids.push(
       objects.push(
         `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents ${content} 0 R ` +
@@ -78,13 +80,14 @@ function pdf(pages: number): Buffer {
     );
   }
   objects[1] = `<< /Type /Pages /Kids [${kids.map((kid) => `${kid} 0 R`).join(" ")}] /Count ${pages} >>`;
-  let out = "%PDF-1.4\n";
+  // The second line's high bytes tell tools that this file is binary, as real PDFs do.
+  let out = "%PDF-1.4\n%\xe2\xe3\xcf\xd3\n";
   const offsets: number[] = [];
   objects.forEach((body, index) => {
-    offsets.push(Buffer.byteLength(out));
+    offsets.push(Buffer.byteLength(out, "latin1"));
     out += `${index + 1} 0 obj\n${body}\nendobj\n`;
   });
-  const xref = Buffer.byteLength(out);
+  const xref = Buffer.byteLength(out, "latin1");
   out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
   for (const offset of offsets) out += `${String(offset).padStart(10, "0")} 00000 n \n`;
   out += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
@@ -162,7 +165,10 @@ function docx(picture: Buffer): Promise<Buffer> {
     para(run("Things that must stay inert"), "Heading2"),
     para(run('<script>document.title = "UNSAFE: a script in a document ran"</script>')),
     para(run('<img src="x" onerror="document.title=\'UNSAFE\'">')),
-    para(run("A picture from the internet, which must not load:") + drawing("rIdRemote", "r:link", "Remote")),
+    para(
+      run("A picture from the internet, which must not load:") +
+        drawing("rIdRemote", "r:link", "Remote"),
+    ),
   ].join("");
   zip.file(
     "word/document.xml",
@@ -199,7 +205,11 @@ function pptx(first: Buffer, second: Buffer): Promise<Buffer> {
     ),
     slide(
       shape(["What the box holds"], "title") +
-        shape(["Terminals you can type into", "Files you can copy, move and preview", "Source control"]) +
+        shape([
+          "Terminals you can type into",
+          "Files you can copy, move and preview",
+          "Source control",
+        ]) +
         picture("rIdStripes", "Amber stripes"),
     ),
     slide(
@@ -274,7 +284,7 @@ function workbook(): XLSX.WorkBook {
     XLSX.utils.aoa_to_sheet([
       ["Month", "Boxes", "Price", "Total"],
       ...months.map((month, index) => [month, 10 + index * 3, 4.5, (10 + index * 3) * 4.5]),
-      ["Sum", { f: "SUM(B2:B7)" }, null, { f: "SUM(D2:D7)" }],
+      ["Sum", { f: "SUM(B2:B7)", v: 105, t: "n" }, null, { f: "SUM(D2:D7)", v: 472.5, t: "n" }],
     ]),
     "Sales",
   );
@@ -308,9 +318,12 @@ function csv(rows: number, separator: string): string {
   const cities = ["Istanbul", "Berlin", "Lisbon", "Kyoto"];
   for (let index = 1; index <= rows; index++) {
     lines.push(
-      [index, `Person ${index}`, cities[index % 4], index % 5 === 0 ? '"quoted, with a comma"' : ""].join(
-        separator,
-      ),
+      [
+        index,
+        `Person ${index}`,
+        cities[index % 4],
+        index % 5 === 0 ? '"quoted, with a comma"' : "",
+      ].join(separator),
     );
   }
   return `${lines.join("\n")}\n`;
@@ -335,15 +348,26 @@ async function zips(root: string): Promise<void> {
     fill(zip);
     return zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE", platform: "UNIX" });
   };
+  // One folder at the top: it unpacks as "photos", whatever the zip is called.
   write(
     root,
-    "Downloads/zips/photos.zip",
+    "Downloads/zips/holiday.zip",
     await make((zip) => {
       zip.file("photos/amber.png", stripes(64, 64, [AMBER, INK]));
       zip.file("photos/sand.png", stripes(64, 64, [SAND, INK]));
       zip.file("photos/notes/where.txt", "Taken on the balcony.\n");
       zip.file("__MACOSX/photos/._amber.png", "resource fork");
       zip.file("photos/.DS_Store", "Finder's");
+    }),
+  );
+  // Several things at the top: they go into a folder named after the zip.
+  write(
+    root,
+    "Downloads/zips/loose-files.zip",
+    await make((zip) => {
+      zip.file("one.txt", "first\n");
+      zip.file("two.txt", "second\n");
+      zip.file("inner/three.txt", "third\n");
     }),
   );
   const escaping = await make((zip) => {
@@ -407,7 +431,7 @@ export async function createDocumentFixture(root: string): Promise<void> {
   write(root, `${folder}/people.csv`, csv(40, ","));
   write(root, `${folder}/people.tsv`, csv(40, "\t"));
   // Over the 2 MB that opens as text, so it is fetched whole before it is shown.
-  write(root, `${folder}/big-table.csv`, csv(60_000, ","));
+  write(root, `${folder}/big-table.csv`, csv(90_000, ","));
   write(root, `${folder}/broken.docx`, "Not a Word document at all.\n");
   await zips(root);
   heavyProject(root);
