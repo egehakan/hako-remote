@@ -67,7 +67,7 @@ type Loaded =
   | { state: "error"; error: FsError };
 
 /** One file on the Mac: read, shown as what it is, and for text, edited and saved. */
-export default function FileView({ path }: { path: string }) {
+export default function FileView({ path, line }: { path: string; line: number | null }) {
   const { link, agent } = useConnection();
   const online = link === "open" && agent?.online === true;
   const keyboardOpen = useVisibleViewport();
@@ -114,6 +114,7 @@ export default function FileView({ path }: { path: string }) {
         // A fresh read is a fresh document: the editor starts over from what the Mac has now.
         key={loaded.readAt}
         path={path}
+        line={line}
         content={loaded.result.content}
         mtime={loaded.result.mtime}
         size={loaded.result.size}
@@ -393,6 +394,8 @@ const writeFile = (params: FsWriteParams) => relay.request<FsWriteResult>("fs.wr
 
 type TextFileProps = {
   path: string;
+  /** The line to show first, from a path tapped in a terminal. */
+  line: number | null;
   content: string;
   mtime: number;
   size: number;
@@ -404,6 +407,7 @@ type TextFileProps = {
 
 function TextFile({
   path,
+  line,
   content,
   mtime,
   size,
@@ -494,6 +498,10 @@ function TextFile({
   }, [content, language]);
 
   useEffect(() => editor?.setWrap(wrap), [editor, wrap]);
+
+  useEffect(() => {
+    if (editor && line !== null) editor.revealLine(line);
+  }, [editor, line]);
 
   // Unsaved text holds navigation back until the owner has said what should happen to it.
   const wideRef = useRef(wide);

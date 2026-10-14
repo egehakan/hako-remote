@@ -25,8 +25,17 @@ import {
   search,
   setSearchQuery,
 } from "@codemirror/search";
-import { Compartment, EditorState, type Extension, type Text } from "@codemirror/state";
 import {
+  Compartment,
+  EditorState,
+  type Extension,
+  StateEffect,
+  StateField,
+  type Text,
+} from "@codemirror/state";
+import {
+  Decoration,
+  type DecorationSet,
   EditorView,
   highlightActiveLine,
   highlightSpecialChars,
@@ -116,6 +125,10 @@ const theme = EditorView.theme(
       fontSize: "11px",
       lineHeight: "20.8px",
     },
+    ".cm-revealed-line": {
+      backgroundColor: "color-mix(in oklab, var(--amber) 18%, transparent)",
+      boxShadow: "inset 2px 0 0 var(--amber)",
+    },
     ".cm-activeLine": { backgroundColor: "color-mix(in oklab, var(--card) 85%, transparent)" },
     ".cm-cursor": { borderLeftColor: "var(--lid)", borderLeftWidth: "2px" },
     ".cm-searchMatch": {
@@ -159,6 +172,22 @@ export type EditorEvents = {
 
 export type FindState = { total: number; current: number };
 
+/** Marks the line a file was opened at, until another is. */
+const revealLineEffect = StateEffect.define<number>();
+const revealedLine = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(marks, transaction) {
+    let next = marks.map(transaction.changes);
+    for (const effect of transaction.effects) {
+      if (effect.is(revealLineEffect)) {
+        next = Decoration.set([Decoration.line({ class: "cm-revealed-line" }).range(effect.value)]);
+      }
+    }
+    return next;
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
+
 const MAX_MATCHES = 9999;
 
 export class CodeEditor {
@@ -190,6 +219,7 @@ export class CodeEditor {
           this.language.of([]),
           this.wrapping.of(wrap ? EditorView.lineWrapping : []),
           this.mode.of(this.modeExtensions(false)),
+          revealedLine,
           theme,
           EditorView.updateListener.of((update) => {
             if (update.docChanged) this.checkDirty();
@@ -270,6 +300,19 @@ export class CodeEditor {
   revert(): void {
     this.view.dispatch({
       changes: { from: 0, to: this.view.state.doc.length, insert: this.saved },
+    });
+  }
+
+  /** Scrolls a line to the middle of the view and marks it, as opening a file at a line does. */
+  revealLine(number: number): void {
+    const doc = this.view.state.doc;
+    const line = doc.line(Math.min(Math.max(1, number), doc.lines));
+    this.view.dispatch({
+      selection: { anchor: line.from },
+      effects: [
+        revealLineEffect.of(line.from),
+        EditorView.scrollIntoView(line.from, { y: "center" }),
+      ],
     });
   }
 

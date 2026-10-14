@@ -51,7 +51,11 @@ export function FilesArea({ route }: { route: FilesRoute }) {
         {shown !== null ? (
           <LoadBoundary>
             <Suspense fallback={<FileLoading />}>
-              <FileView key={shown} path={shown} />
+              <FileView
+                key={shown}
+                path={shown}
+                line={route.name === "file" && route.path === shown ? route.line : null}
+              />
             </Suspense>
           </LoadBoundary>
         ) : (

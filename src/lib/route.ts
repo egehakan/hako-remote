@@ -10,7 +10,8 @@ export type Route =
   /** The places file browsing starts from. */
   | { name: "files" }
   | { name: "dir"; path: string }
-  | { name: "file"; path: string }
+  /** A file, scrolled to `line` when one is given (from a path tapped in a terminal). */
+  | { name: "file"; path: string; line: number | null }
   /** Every repository on the Mac. */
   | { name: "git" }
   /** One repository's changed files, by the path of its working tree. */
@@ -56,10 +57,17 @@ export function parseRoute(hash: string): Route {
   if (path.startsWith("t/") && path.length > 2) {
     return { name: "terminal", sessionId: decodeURIComponent(path.slice(2)) };
   }
-  for (const name of ["dir", "file"] as const) {
-    if (!path.startsWith(`${name}/`)) continue;
-    const decoded = decodePath(path.slice(name.length));
-    return decoded === null ? { name: "files" } : { name, path: decoded };
+  if (path.startsWith("dir/")) {
+    const decoded = decodePath(path.slice(3));
+    return decoded === null ? { name: "files" } : { name: "dir", path: decoded };
+  }
+  if (path.startsWith("file/")) {
+    // A name's own "?" is escaped, so the first one starts the query.
+    const mark = path.indexOf("?");
+    const decoded = decodePath(path.slice(4, mark === -1 ? undefined : mark));
+    const line = mark === -1 ? null : Number(/(?:^|&)l=(\d+)/.exec(path.slice(mark + 1))?.[1]);
+    if (decoded === null) return { name: "files" };
+    return { name: "file", path: decoded, line: line !== null && line > 0 ? line : null };
   }
   return { name: "workspace" };
 }
@@ -145,7 +153,8 @@ export const routes = {
   tab: (tabId: string) => `#/tab/${encodeURIComponent(tabId)}`,
   terminal: (sessionId: string) => `#/t/${encodeURIComponent(sessionId)}`,
   dir: (path: string) => `#/dir${encodePath(path)}`,
-  file: (path: string) => `#/file${encodePath(path)}`,
+  file: (path: string, line: number | null = null) =>
+    `#/file${encodePath(path)}${line === null ? "" : `?l=${line}`}`,
 };
 
 export function navigate(hash: string, options: { replace?: boolean } = {}): void {
