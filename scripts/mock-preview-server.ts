@@ -6,6 +6,11 @@
 //     redirect to its own localhost address, a cookie for Domain=localhost, the request headers as
 //     the server saw them, a download of any size and an upload counter.
 //
+//   node scripts/mock-preview-server.ts lab <port>
+//     Everything the Mac browser has to carry: links, a long page, a form, a new tab and a pop-up,
+//     alert, confirm and prompt, a select, date, time and colour inputs, a file input, a download,
+//     text to copy, and console errors and failed requests.
+//
 //   node scripts/mock-preview-server.ts two-port <web port> <api port>
 //     A page on one port that uses an API on another, by its localhost address, as a web app and its
 //     API server do on a Mac: fetch with credentials, an image, a WebSocket, and a sign-in cookie set
@@ -166,6 +171,168 @@ addEventListener("load", () => {
   server.listen(port, "127.0.0.1", () => console.log(`demo site on http://localhost:${port}`));
 }
 
+function lab(port: number): void {
+  const home = `<h1>Browser lab</h1>
+<p id="intro">Each part below tries one thing the Mac browser has to carry to the phone. Select this
+sentence and copy it.</p>
+<h2>Pages</h2>
+<p><a id="to-long" href="/long">A long page</a> · <a id="to-form" href="/form">A form</a> ·
+<a id="new-tab" href="/tab" target="_blank">Open in a new tab</a> ·
+<button id="popup">Open a pop-up</button> <span id="popup-result"></span></p>
+<h2>Dialogs</h2>
+<p><button id="alert">Alert</button> <button id="confirm">Confirm</button>
+<button id="prompt">Prompt</button></p>
+<pre id="dialog-result">no dialog yet</pre>
+<h2>Pickers</h2>
+<p><label>Fruit <select id="fruit"><option value="apple">Apple</option><option value="pear" selected>Pear</option>
+<optgroup label="Citrus"><option value="lemon">Lemon</option><option value="lime" disabled>Lime</option></optgroup></select></label></p>
+<p><label>Toppings <select id="toppings" multiple><option value="nuts">Nuts</option><option value="cream" selected>Cream</option><option value="honey">Honey</option></select></label></p>
+<p><label>Date <input id="date" type="date" value="2026-10-14"></label>
+<label>Time <input id="time" type="time" value="09:30"></label>
+<label>Colour <input id="color" type="color" value="#e8923e"></label></p>
+<pre id="picker-result">nothing chosen yet</pre>
+<h2>Files</h2>
+<form method="post" action="/upload" enctype="multipart/form-data">
+<input id="files" type="file" name="files" multiple accept="image/*,.txt,.pdf">
+<button>Upload</button></form>
+<pre id="file-result">no files chosen</pre>
+<p><a id="download" href="/download/report.txt">Download report.txt</a></p>
+<h2>Console</h2>
+<p><button id="log-error">Log an error</button> <button id="throw">Throw</button>
+<button id="fetch-missing">Fetch a missing file</button></p>
+<p><input id="typing" placeholder="Type here" style="width:90%"></p>
+<pre id="typed"></pre>
+<img src="/missing.png" alt="" width="1" height="1">`;
+  const homeScript = `
+const show = (id, text) => { document.getElementById(id).textContent = text; };
+document.getElementById("popup").onclick = () => window.open("/popup", "lab-popup", "width=420,height=520");
+document.getElementById("alert").onclick = () => { alert("Hello from the lab"); show("dialog-result", "alert closed"); };
+document.getElementById("confirm").onclick = () => show("dialog-result", "confirm: " + confirm("Go ahead?"));
+document.getElementById("prompt").onclick = () => show("dialog-result", "prompt: " + JSON.stringify(prompt("Your name?", "Ada")));
+const pickers = () => show("picker-result", [
+  "fruit=" + document.getElementById("fruit").value,
+  "toppings=" + [...document.getElementById("toppings").selectedOptions].map((o) => o.value).join("+"),
+  "date=" + document.getElementById("date").value,
+  "time=" + document.getElementById("time").value,
+  "color=" + document.getElementById("color").value,
+].join("\\n"));
+for (const id of ["fruit", "toppings", "date", "time", "color"]) {
+  document.getElementById(id).addEventListener("change", pickers);
+}
+document.getElementById("files").addEventListener("change", (e) => show("file-result",
+  [...e.target.files].map((f) => f.name + " (" + f.size + " bytes)").join("\\n") || "no files chosen"));
+document.getElementById("log-error").onclick = () => console.error("lab: an error logged on purpose");
+document.getElementById("throw").onclick = () => setTimeout(() => { throw new Error("lab: thrown on purpose"); });
+document.getElementById("fetch-missing").onclick = () => fetch("/missing.json");
+document.getElementById("typing").addEventListener("input", (e) => show("typed", e.target.value));
+console.warn("lab: a warning on load");
+`;
+  const server = http.createServer((req, res) => {
+    const url = new URL(req.url ?? "/", `http://localhost:${port}`);
+    switch (url.pathname) {
+      case "/":
+        html(res, page("Browser lab", home, homeScript));
+        return;
+      case "/long": {
+        const rows = Array.from(
+          { length: 150 },
+          (_, i) => `<p id="row-${i + 1}">Row ${i + 1} of a long page.</p>`,
+        ).join("\n");
+        html(
+          res,
+          page(
+            "A long page",
+            `<h1>A long page</h1>${rows}<p><a id="bottom-link" href="/">Back to the lab</a></p>`,
+          ),
+        );
+        return;
+      }
+      case "/form":
+        if (req.method === "POST") {
+          let body = "";
+          req.on("data", (chunk: Buffer) => {
+            body += chunk.toString("utf8");
+          });
+          req.on("end", () => {
+            const fields = new URLSearchParams(body);
+            const rows = [...fields].map(([k, v]) => `${escape(k)}: ${escape(v)}`).join("\n");
+            html(
+              res,
+              page(
+                "Sent",
+                `<h1>The form arrived</h1><pre id="form-result">${rows}</pre><p><a href="/form">Again</a> · <a href="/">Lab</a></p>`,
+              ),
+            );
+          });
+          return;
+        }
+        html(
+          res,
+          page(
+            "A form",
+            `<h1>A form</h1><form method="post" action="/form">
+<p><label>Name <input id="name" name="name" autocomplete="off"></label></p>
+<p><label>Notes <textarea id="notes" name="notes" rows="3"></textarea></label></p>
+<p><label><input id="agree" type="checkbox" name="agree" value="yes"> I agree</label></p>
+<p><button id="submit">Send</button></p></form>`,
+          ),
+        );
+        return;
+      case "/tab":
+        html(
+          res,
+          page(
+            "A new tab",
+            `<h1>This opened in a new tab</h1><p><button id="close" onclick="window.close()">Close this tab</button> · <a href="/long">Go to the long page</a></p>`,
+          ),
+        );
+        return;
+      case "/popup":
+        html(
+          res,
+          page(
+            "A pop-up",
+            `<h1>A pop-up</h1><p><button id="answer">Answer and close</button></p>`,
+            `document.getElementById("answer").onclick = () => {
+  if (window.opener) window.opener.document.getElementById("popup-result").textContent =
+    "the pop-up answered at " + new Date().toLocaleTimeString();
+  window.close();
+};`,
+          ),
+        );
+        return;
+      case "/download/report.txt":
+        res.writeHead(200, {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Content-Disposition": 'attachment; filename="report.txt"',
+        });
+        res.end(`A report from the browser lab, made at ${new Date().toISOString()}.\n`);
+        return;
+      case "/upload": {
+        const chunks: Buffer[] = [];
+        req.on("data", (chunk: Buffer) => chunks.push(chunk));
+        req.on("end", () => {
+          const body = Buffer.concat(chunks).toString("latin1");
+          const names = [...body.matchAll(/filename="([^"]*)"/g)].map((m) => m[1]);
+          html(
+            res,
+            page(
+              "Uploaded",
+              `<h1>Upload arrived</h1><pre id="upload-result">${escape(names.join("\n") || "(no files)")}
+${chunks.reduce((n, c) => n + c.length, 0)} bytes in all</pre><p><a href="/">Lab</a></p>`,
+            ),
+          );
+        });
+        return;
+      }
+      default:
+        res.writeHead(404, { "Content-Type": "text/plain" });
+        res.end("not found\n");
+    }
+  });
+  server.listen(port, "127.0.0.1", () => console.log(`browser lab on http://localhost:${port}`));
+}
+
 function escape(text: string): string {
   return text.replace(/[&<>"]/g, (char) => `&#${char.charCodeAt(0)};`);
 }
@@ -284,7 +451,10 @@ ws.onerror = () => { document.getElementById("ws").textContent = "failed"; };
 
 if (mode === "site") site(Number(first));
 else if (mode === "two-port") twoPort(Number(first), Number(second));
+else if (mode === "lab") lab(Number(first));
 else {
-  console.error("usage: mock-preview-server.ts site <port> | two-port <web port> <api port>");
+  console.error(
+    "usage: mock-preview-server.ts site <port> | lab <port> | two-port <web port> <api port>",
+  );
   process.exit(2);
 }

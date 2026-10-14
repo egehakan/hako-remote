@@ -1,10 +1,11 @@
 // The mock agent's previews: real dev servers on this computer, started at launch and stopped at
 // exit, the preview methods, and the agent side of the byte streams (docs/protocol.md, "Previews").
 //
-// Two previews are always there: `demo` (scripts/mock-preview-server.ts site) and `twoport`, a page
-// and the API it calls on another port. More come from MOCK_PREVIEWS, the path of a JSON file
-// listing `{ id, name, directory, command, port, ports?, url_path?, env? }`; `{port}` in a command
-// stands for its port. MOCK_PREVIEWS_OFF=1 leaves the preview methods out, as an older app would.
+// Three previews are always there: `demo` (scripts/mock-preview-server.ts site), `twoport`, a page
+// and the API it calls on another port, and `lab`, a page of everything the Mac browser must
+// handle. More come from MOCK_PREVIEWS, the path of a JSON file listing `{ id, name, directory,
+// command, port, ports?, url_path?, env? }`; `{port}` in a command stands for its port.
+// MOCK_PREVIEWS_OFF=1 leaves the preview methods out, as an older app would.
 
 import { type ChildProcess, spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -151,6 +152,7 @@ export async function createPreviewMock(host: PreviewHost, scratch: string) {
   const demoPort = await freePort();
   const webPort = await freePort();
   const apiPort = await freePort();
+  const labPort = await freePort();
   const node = process.execPath;
   const specs: Spec[] = [
     {
@@ -173,6 +175,16 @@ export async function createPreviewMock(host: PreviewHost, scratch: string) {
         { port: webPort, label: "web" },
         { port: apiPort, label: "api" },
       ],
+      url_path: "/",
+      env: {},
+    },
+    {
+      id: "lab",
+      name: "Browser lab",
+      directory: scratch,
+      command: `"${node}" "${SERVER_SCRIPT}" lab ${labPort}`,
+      port: labPort,
+      ports: [{ port: labPort, label: "web" }],
       url_path: "/",
       env: {},
     },

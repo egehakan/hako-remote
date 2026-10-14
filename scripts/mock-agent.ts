@@ -96,6 +96,7 @@ import {
 } from "./mock-files.ts";
 import { createDocumentFixture } from "./mock-documents.ts";
 import { createOperationMethods, LimitFailure } from "./mock-operations.ts";
+import { BrowserFailure, createBrowserMock } from "./mock-browser.ts";
 import { createPreviewMock, type LogTab, PreviewFailure } from "./mock-previews.ts";
 import { createTransferMethods } from "./mock-transfers.ts";
 
@@ -894,6 +895,8 @@ function handleFrame(text: string): void {
   if (frame.t === "ntf") {
     if (frame.method === "term.input" && typeof params.data === "string") {
       terminals.get(String(params.session_id ?? ""))?.input(params.data);
+    } else if (typeof frame.method === "string") {
+      macBrowser?.notify(frame.method, params);
     }
     return;
   }
@@ -914,7 +917,8 @@ function handleFrame(text: string): void {
     renameMethods[frame.method] ??
     fsMethods[frame.method] ??
     gitMethods[frame.method] ??
-    previews?.methods[frame.method];
+    previews?.methods[frame.method] ??
+    macBrowser?.methods[frame.method];
   if (!method) {
     send({
       t: "res",
@@ -929,7 +933,8 @@ function handleFrame(text: string): void {
       error instanceof RpcFailure ||
       error instanceof FsFailure ||
       error instanceof GitFailure ||
-      error instanceof PreviewFailure;
+      error instanceof PreviewFailure ||
+      error instanceof BrowserFailure;
     const message = error instanceof Error ? error.message : "Failed";
     const limit = error instanceof LimitFailure ? { limit: error.limit } : {};
     send({
@@ -1148,6 +1153,7 @@ function connect(): void {
     // With the relay gone nobody is subscribed, which also gives every terminal its own size back.
     for (const terminal of terminals.values()) terminal.stopStreaming();
     previews?.dropStreams();
+    macBrowser?.dropAll();
     if (stopping) return;
     // Another agent took this one's place: wait the full backoff instead of fighting over the slot.
     const wait = code === CLOSE_REPLACED ? 30_000 : backoffMs;
@@ -1163,6 +1169,7 @@ function stop(): void {
   for (const terminal of terminals.values()) terminal.abandon();
   transfers?.dispose();
   void previews?.dispose();
+  macBrowser?.dispose();
   removeFixture(HOME);
   rmSync(NOTIFY_FILE, { force: true });
   if (process.stdin.isTTY) process.stdin.setRawMode(false);
@@ -1266,5 +1273,26 @@ if (previews) {
 } else {
   console.log("previews are off (MOCK_PREVIEWS_OFF=1)");
 }
+
+const macBrowser =
+  process.env.MOCK_BROWSER_OFF === "1"
+    ? null
+    : createBrowserMock({
+        sendEvent,
+        sendBinary: (data) => {
+          if (connection?.readyState === WebSocket.OPEN) connection.send(data);
+        },
+        previewUrl: (id) => {
+          const preview = previews?.list().find((item) => item.id === id);
+          if (!preview || preview.status !== "running") return null;
+          return `http://localhost:${preview.port}${preview.url_path}`;
+        },
+        downloadsDir: join(HOME, ".hako", "preview-downloads"),
+      });
+console.log(
+  macBrowser
+    ? "the Mac browser is a headless Chrome on this computer, started on the first browser.open"
+    : "the Mac browser is off (MOCK_BROWSER_OFF=1)",
+);
 
 connect();
