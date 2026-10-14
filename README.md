@@ -150,6 +150,11 @@ terminal's working directory.
   items fail each is listed with what the Mac said. With a keyboard: Cmd or Ctrl and C, X, V, A;
   Delete or Backspace for the Trash; F2 to rename; Cmd- or Ctrl-click and Shift-click to choose;
   a right click opens a row's menu.
+- **Copying a path.** "Copy path" and "Copy relative path" are in each row's menu, above the bar
+  when one item is selected, and in an open file's menu (the dots at the top). The relative path is
+  the one from the deepest folder or terminal directory that holds it, else from home, and `.` for
+  that folder itself; outside all of them it is `~/…` or the full path. "Copied" says what went on
+  the phone's clipboard; a browser that refuses shows the path to select and copy by hand.
 - **Previews.** PDFs (every page, drawn as they come into view, with two-finger zoom and a page
   counter), Word `.docx` documents (as text, headings, lists, tables and pictures, with nothing
   that runs and nothing fetched from elsewhere), spreadsheets (`.xlsx`, `.xls`, `.ods`, `.csv`,

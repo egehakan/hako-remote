@@ -1,6 +1,7 @@
 import { FileTextIcon } from "lucide-react";
 import { lazy, Suspense, useState } from "react";
 import { FilesBrowser } from "@/components/files/browser";
+import { CopyNotice } from "@/components/files/copy-path";
 import { LoadBoundary } from "@/components/load-boundary";
 import {
   Empty,
@@ -73,6 +74,7 @@ export function FilesArea({ route }: { route: FilesRoute }) {
           </Empty>
         )}
       </div>
+      <CopyNotice />
     </>
   );
 }

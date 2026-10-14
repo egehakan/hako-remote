@@ -17,6 +17,7 @@ import { DiscardDialog } from "@/components/files/discard-dialog";
 import { EditBar } from "@/components/files/edit-bar";
 import { FindBar } from "@/components/files/find-bar";
 import { ImageView } from "@/components/files/image-view";
+import { PathMenuButton } from "@/components/files/copy-path";
 import { SAVE_LABEL, useSaving } from "@/components/files/save-file";
 import { FsProblem } from "@/components/files/states";
 import { TransferTray } from "@/components/files/transfer-tray";
@@ -39,7 +40,7 @@ import { formatSize } from "@/lib/files/format";
 import { type LanguageId, languageLabel, languageOf } from "@/lib/files/language";
 import { isDelimitedText, previewKindOf } from "@/lib/files/preview";
 import { loadLanguage } from "@/lib/files/language-loader";
-import { baseName, parentOf } from "@/lib/files/paths";
+import { baseName, joinPath, parentOf } from "@/lib/files/paths";
 import { detectLineEnding, type SaveOutcome, SaveGuard } from "@/lib/files/save";
 import {
   filesPrefs,
@@ -303,6 +304,7 @@ function FileHeader({ name, directory, status, children }: FileHeaderProps) {
         </p>
       </div>
       {children}
+      <PathMenuButton path={joinPath(directory, name)} name={name} />
     </header>
   );
 }

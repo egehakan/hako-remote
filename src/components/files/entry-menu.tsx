@@ -1,6 +1,8 @@
 import {
+  ClipboardCopyIcon,
   ClipboardPasteIcon,
   CopyIcon,
+  CornerDownRightIcon,
   CopyPlusIcon,
   DownloadIcon,
   FileArchiveIcon,
@@ -11,6 +13,11 @@ import {
   Trash2Icon,
 } from "lucide-react";
 import { type ComponentType, type ReactNode, useId, useState } from "react";
+import {
+  COPY_PATH_LABEL,
+  COPY_RELATIVE_PATH_LABEL,
+  usePathCopy,
+} from "@/components/files/copy-path";
 import { SAVE_LABEL, useSaving } from "@/components/files/save-file";
 import {
   Sheet,
@@ -100,6 +107,7 @@ function MenuBody({
   const saving = useSaving(target.isDirectory ? null : target.size);
   const [skipHeavy, setSkipHeavy] = useState(true);
   const switchId = useId();
+  const { copyPath, copyRelativePath } = usePathCopy();
   const opsReason = !online ? "Your Mac is offline." : ops === "no" ? NEEDS_NEWER_HAKO : null;
   const opsOff = opsReason !== null || ops !== "yes";
   const run = (action: () => void) => () => {
@@ -210,6 +218,18 @@ function MenuBody({
           <Action icon={ListChecksIcon} label="Select" onClick={run(onSelect)} />
         </>
       )}
+      <div className="flex flex-col border-t pt-1">
+        <Action
+          icon={ClipboardCopyIcon}
+          label={COPY_PATH_LABEL}
+          onClick={run(() => copyPath(target.path))}
+        />
+        <Action
+          icon={CornerDownRightIcon}
+          label={COPY_RELATIVE_PATH_LABEL}
+          onClick={run(() => copyRelativePath(target.path))}
+        />
+      </div>
     </div>
   );
 }

@@ -2,8 +2,10 @@ import { firstFreeName } from "@shared/operations";
 import { isDirectory } from "@shared/files";
 import type { FsEntry } from "@shared/protocol";
 import {
+  ClipboardCopyIcon,
   ClipboardPasteIcon,
   CopyIcon,
+  CornerDownRightIcon,
   CopyPlusIcon,
   EllipsisIcon,
   FilePlusIcon,
@@ -27,6 +29,11 @@ import {
   useRef,
   useState,
 } from "react";
+import {
+  COPY_PATH_LABEL,
+  COPY_RELATIVE_PATH_LABEL,
+  usePathCopy,
+} from "@/components/files/copy-path";
 import type { MenuTarget } from "@/components/files/entry-menu";
 import type { NameTask } from "@/components/files/operation-dialogs";
 import {
@@ -427,28 +434,56 @@ export function useFileActions({ path, entries, visibleNames }: FileActionsInput
     openUpload: () => setUploadOpen(true),
     dialogs,
     selectionBar: selecting ? (
-      <SelectionBar
-        count={selected.size}
-        enabled={canChange}
-        onCopy={() => copy(selectedItems, "copy")}
-        onCut={() => copy(selectedItems, "move")}
-        onDuplicate={() => duplicate(selectedItems)}
-        onRename={() => rename(selectedItems[0] ?? null)}
-        onTrash={() => setTrashItems(selectedItems)}
-        onMore={() => {
-          const only = selectedItems[0];
-          const entry = only ? byName.get(only.name) : undefined;
-          if (only && entry) {
-            openMenu({ ...only, size: entry.size, here: false });
-          }
-        }}
-      />
+      <>
+        {selectedItems.length === 1 ? <PathBar path={selectedItems[0].path} /> : null}
+        <SelectionBar
+          count={selected.size}
+          enabled={canChange}
+          onCopy={() => copy(selectedItems, "copy")}
+          onCut={() => copy(selectedItems, "move")}
+          onDuplicate={() => duplicate(selectedItems)}
+          onRename={() => rename(selectedItems[0] ?? null)}
+          onTrash={() => setTrashItems(selectedItems)}
+          onMore={() => {
+            const only = selectedItems[0];
+            const entry = only ? byName.get(only.name) : undefined;
+            if (only && entry) {
+              openMenu({ ...only, size: entry.size, here: false });
+            }
+          }}
+        />
+      </>
     ) : null,
   };
 }
 
 function targetItem(target: MenuTarget): PasteItem {
   return { path: target.path, name: target.name, isDirectory: target.isDirectory };
+}
+
+/** Copies the path of the one item selected. */
+function PathBar({ path }: { path: string }) {
+  const { copyPath, copyRelativePath } = usePathCopy();
+  return (
+    <div className="grid shrink-0 grid-cols-2 border-t bg-card pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)]">
+      <button
+        type="button"
+        onClick={() => copyPath(path)}
+        className="flex min-h-11 items-center justify-center gap-2 px-2 text-[0.8125rem] leading-5 outline-none hover:bg-accent/50 focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset"
+      >
+        <ClipboardCopyIcon className="size-4 shrink-0" aria-hidden="true" />
+        {COPY_PATH_LABEL}
+      </button>
+      <button
+        type="button"
+        onClick={() => copyRelativePath(path)}
+        className="flex min-h-11 items-center justify-center gap-2 border-l px-2 text-[0.8125rem] leading-5 outline-none hover:bg-accent/50 focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset"
+      >
+        <CornerDownRightIcon className="size-4 shrink-0" aria-hidden="true" />
+        {COPY_RELATIVE_PATH_LABEL}
+      </button>
+    </div>
+  );
 }
 
 type SelectionBarProps = {
